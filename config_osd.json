@@ -53,6 +53,18 @@
       ]
     },
     {
+      "id": "dvr_storage",
+      "name": "DVR storage",
+      "type": "DvrStorageWidget",
+      "x": 0,
+      "y": 0,
+      "icon_path": "hard-drive.png",
+      "facts": [
+        { "name": "dvr.storage_status" },
+        { "name": "dvr.storage_available_bytes" }     
+      ]
+    },
+    {
       "name": "WFB client status",
       "type": "IconTplStatusWidget",
       "x": -75,
@@ -75,6 +87,18 @@
       ]
     },
     {
+      "id": "dvr_status",
+      "name": "DVR status",
+      "type": "DvrStatusWidget",
+      "x": 0,
+      "y": 0,
+      "icon_path": "sdcard-white.png",
+      "text": "Rec",
+      "facts": [
+        { "name": "dvr.recording" }
+      ]
+    },
+    {
       "name": "msposd",
       "type": "ExternalSurfaceWidget",
       "x": 0,
@@ -83,5 +107,18 @@
       "height": 0,
       "facts": []
     }
-  ]
+  ],
+  "layouts": [
+    {
+      "type": "horizontal",
+        "x": -10,
+        "y": 35,
+        "spacing": 10,
+        "direction": "right-to-left",
+        "widgets": [
+          "dvr_storage",
+          "dvr_status"
+        ]
+      }
+    ]
 }
