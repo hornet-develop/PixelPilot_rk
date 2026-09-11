@@ -23,7 +23,7 @@
 
 #include "mavlink/common/mavlink.h"
 #include "mavlink.h"
-#include "osd.h"
+#include "osd/osd_publish.h"
 
 // C-compatible interface to the C++ Dvr object. `Dvr` is opaque here - the pointer is only ever
 // handed straight back to the shims, which are defined in dvr.cpp under extern "C".

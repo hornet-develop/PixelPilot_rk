@@ -43,8 +43,8 @@ extern "C" {
 #include "mavlink.h"
 }
 
-#include "osd.h"
-#include "osd.hpp"
+#include "osd/osd_publish.h"
+#include "osd/osd_service.hpp"
 #include "wfbcli.hpp"
 #include "dvr/dvr.h"
 #include "scheduling_helper.hpp"
@@ -144,15 +144,17 @@ int frm_eos = 0;
 int drm_fd = 0;
 pthread_mutex_t video_mutex;
 pthread_cond_t video_cond;
-extern bool osd_update_ready;
+bool osd_update_ready = false;
 std::atomic<bool> video_present = false;
 int video_zpos = 1;
 
 bool update_osd_video_size = false;
 bool mavlink_dvr_on_arm = false;
+bool enable_osd = false;
 bool osd_custom_message = false;
 bool disable_vsync = false;
 uint32_t refresh_frequency_ms = 1000;
+pthread_mutex_t osd_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 std::atomic<uint64_t> last_demux_output_ms{0};
 std::atomic<bool> codec_detected = false;
@@ -573,7 +575,6 @@ void sig_handler(int signum)
 	signal_flag++;
 	mavlink_thread_signal++;
 	wfb_thread_signal++;
-	osd_thread_signal++;
 }
 
 void sigusr1_handler(int signum) {
@@ -1347,7 +1348,7 @@ int main(int argc, char **argv)
 	ret = pthread_cond_init(&video_cond, NULL);
 	assert(!ret);
 
-	pthread_t tid_display, tid_osd, tid_mavlink, tid_dvr, tid_wfbcli;
+	pthread_t tid_display, tid_mavlink, tid_dvr, tid_wfbcli;
 	bool dvr_thread_started = false;
 	bool dvr_requested = (dvr_template != NULL);
 	if (dvr_requested && dvr_enable_osd) {
@@ -1393,12 +1394,19 @@ int main(int argc, char **argv)
 	ret = pthread_create(&tid_display, NULL, __DISPLAY_THREAD__, NULL);
 	assert(!ret);
 
-    nlohmann::json osd_config{};
+	OsdServiceParams params;
+	params.out = output_list;
+	params.fd = drm_fd;
+	params.config_path = osd_config_path;
+	params.screensaver_image = screensaver_image_path;
+	params.refresh_frequency_ms = refresh_frequency_ms;
+	params.enabled = enable_osd;
+	params.custom_message_enabled = osd_custom_message;
+
+	bool osd_started = OsdService::start(std::move(params));
+	assert(osd_started);
+
     if (enable_osd) {
-        if(osd_config_path != "") {
-            std::ifstream f(osd_config_path);
-            osd_config = nlohmann::json::parse(f);
-        }
         if (mavlink_thread) {
             ret = pthread_create(&tid_mavlink, NULL, __MAVLINK_THREAD__, &signal_flag);
             assert(!ret);
@@ -1410,13 +1418,6 @@ int main(int argc, char **argv)
             assert(!ret);
         }
     }
-    osd_thread_params *args = new osd_thread_params;
-    args->fd = drm_fd;
-    args->out = output_list;
-    args->config = osd_config;
-    args->screensaver_image = screensaver_image_path;
-    ret = pthread_create(&tid_osd, NULL, __OSD_THREAD__, args);
-    assert(!ret);
 
 	////////////////////////////////////////////// MAIN LOOP
 
@@ -1424,8 +1425,27 @@ int main(int argc, char **argv)
 
     ////////////////////////////////////////////// THREAD CLEANUP
 
+	if (enable_osd) {
+        if (mavlink_thread) {
+            ret = pthread_join(tid_mavlink, NULL);
+            assert(!ret);
+        }
+        ret = pthread_join(tid_wfbcli, NULL);
+        assert(!ret);
+    }
+
+    if (dvr_thread_started) {
+        if (dvr != NULL) {
+            dvr->shutdown();
+        }
+        ret = pthread_join(tid_dvr, NULL);
+        assert(!ret);
+	}
+
 	ret = pthread_join(tid_frame, NULL);
 	assert(!ret);
+
+	OsdService::stop();
 	
 	ret = pthread_mutex_lock(&video_mutex);
 	assert(!ret);	
@@ -1442,25 +1462,6 @@ int main(int argc, char **argv)
 	ret = pthread_mutex_destroy(&video_mutex);
 	assert(!ret);
 
-    if (enable_osd) {
-        if (mavlink_thread) {
-            ret = pthread_join(tid_mavlink, NULL);
-            assert(!ret);
-        }
-        ret = pthread_join(tid_wfbcli, NULL);
-        assert(!ret);
-    }
-
-    ret = pthread_join(tid_osd, NULL);
-    assert(!ret);
-
-    if (dvr_thread_started) {
-        if (dvr != NULL) {
-            dvr->shutdown();
-        }
-        ret = pthread_join(tid_dvr, NULL);
-        assert(!ret);
-	}
 	////////////////////////////////////////////// MPI CLEANUP
 
 	cleanup_mpi(packet);

@@ -11,9 +11,10 @@ set(SOURCE_FILES
         src/common.h
         src/drm.h
         src/drm.c
-        src/osd.h
-        src/osd.hpp
-        src/osd.cpp
+        src/osd/osd_publish.h
+        src/osd/osd_publish.cpp
+        src/osd/osd_service.hpp
+        src/osd/osd_service.cpp
         src/rtp_codec_detector.hpp
         src/rtp_codec_detector.cpp
         src/rtp_receiver.hpp
@@ -45,7 +46,6 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBDRM REQUIRED IMPORTED_TARGET libdrm)
 pkg_check_modules(CAIRO REQUIRED IMPORTED_TARGET cairo)
 pkg_check_modules(SPDLOG REQUIRED IMPORTED_TARGET spdlog)
-pkg_check_modules(NLOHMANN REQUIRED IMPORTED_TARGET nlohmann_json)
 pkg_check_modules(MSGPACK REQUIRED IMPORTED_TARGET msgpack)
 
 include_directories(${PROJECT_NAME}
@@ -53,14 +53,14 @@ include_directories(${PROJECT_NAME}
 )
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/lib/librtp)
+add_subdirectory(${CMAKE_SOURCE_DIR}/lib/libosd)
 
 add_executable(${PROJECT_NAME} ${SOURCE_FILES})
 
-target_link_libraries(${PROJECT_NAME} PRIVATE m rtp
+target_link_libraries(${PROJECT_NAME} PRIVATE rtp osd
         PkgConfig::LIBDRM
         PkgConfig::CAIRO
         PkgConfig::SPDLOG
-        PkgConfig::NLOHMANN
         PkgConfig::MSGPACK
         rockchip_mpp pthread m rt
 )
