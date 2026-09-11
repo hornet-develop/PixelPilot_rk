@@ -32,10 +32,6 @@ extern int signal_flag;
 #include "rtp-demuxer.h"
 #include "rtp-profile.h"
 
-extern "C" {
-#include "osd.h"
-}
-
 static const int CODEC_MISMATCH_CONFIRM = 5;
 
 // Main callback for packet processing after codec is known

@@ -21,7 +21,7 @@
 #include "dvr.h"
 
 extern "C" {
-#include "../osd.h"
+#include "../osd/osd_publish.h"
 }
 
 namespace fs = std::filesystem;
