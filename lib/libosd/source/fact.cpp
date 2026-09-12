@@ -1,25 +1,12 @@
+#include <cassert>
+
 #include <osd/fact.hpp>
-
 #include <spdlog/spdlog.h>
-
-FactMeta::FactMeta() : name(""), tags({}) {}
-
-FactMeta::FactMeta(std::string name) : name(name), tags({}) {}
-
-FactMeta::FactMeta(std::string name, FactTags tags) : name(name), tags(tags) {}
-
-std::string FactMeta::getName() {
-    return name;
-}
-
-FactTags FactMeta::getTags() {
-    return tags;
-}
 
 /**
  * Returns true if names are equal and all match_tags are defined and have equal value
  */
-bool FactMeta::match(FactMatcher matcher) {
+bool FactMeta::match(const FactMatcher &matcher) const {
     if (matcher.name != name) {
         return false;
     }
@@ -34,80 +21,36 @@ bool FactMeta::match(FactMatcher matcher) {
     return true;
 }
 
-Fact::Fact() : meta(FactMeta("", {})), type(T_UNDEF) {};
-
-Fact::Fact(FactMeta meta, bool val) : meta(meta), value(val), type(T_BOOL) {};
-
-Fact::Fact(FactMeta meta, long val) : meta(meta), value(val), type(T_INT) {};
-
-Fact::Fact(FactMeta meta, ulong val) : meta(meta), value(val), type(T_UINT) {};
-
-Fact::Fact(FactMeta meta, double val) : meta(meta), value(val), type(T_DOUBLE) {};
-
-Fact::Fact(FactMeta meta, std::string val) : meta(meta), value(val), type(T_STRING) {};
-
-Fact::Fact(FactMeta meta) : meta(meta), type(T_UNDEF) {};
-
-bool Fact::isDefined() {
-    return type != T_UNDEF;
+bool Fact::getBoolValue() const {
+    return checkType(T_BOOL) ? std::get<bool>(value_) : false;
 }
 
-// TODO: try to cast instead of crash
-bool Fact::getBoolValue() {
-    assertType(T_BOOL);
-    return std::get<bool>(value);
+long Fact::getIntValue() const {
+    return checkType(T_INT) ? std::get<long>(value_) : 0;
 }
 
-long Fact::getIntValue() {
-    assertType(T_INT);
-    return std::get<long>(value);
+ulong Fact::getUintValue() const {
+    return checkType(T_UINT) ? std::get<ulong>(value_) : 0;
 }
 
-ulong Fact::getUintValue() {
-    assertType(T_UINT);
-    return std::get<ulong>(value);
+double Fact::getDoubleValue() const {
+    return checkType(T_DOUBLE) ? std::get<double>(value_) : 0.0;
 }
 
-double Fact::getDoubleValue() {
-    assertType(T_DOUBLE);
-    return std::get<double>(value);
+std::string Fact::getStrValue() const {
+    return checkType(T_STRING) ? std::get<std::string>(value_) : std::string{};
 }
 
-std::string Fact::getStrValue() {
-    assertType(T_STRING);
-    return std::get<std::string>(value);
+bool Fact::matches(const FactMatcher &matcher) const {
+    return meta_.match(matcher);
 }
 
-bool Fact::matches(FactMatcher matcher) {
-    return meta.match(matcher);
-}
-
-std::string Fact::getTypeName() {
-    return typeName(type);
-}
-
-Fact::Type Fact::getType() {
-    return type;
-}
-
-std::string Fact::getName() {
-    return meta.getName();
-}
-
-FactTags Fact::getTags() {
-    return meta.getTags();
-}
-
-std::string Fact::asString() {
-    switch (type) {
+std::string Fact::asString() const {
+    switch (getType()) {
         case T_UNDEF:
             return "(undefined)";
         case T_BOOL:
-            if (getBoolValue()) {
-                return "true";
-            } else {
-                return "false";
-            };
+            return getBoolValue() ? "true" : "false";
         case T_INT:
             return std::to_string(getIntValue());
         case T_UINT:
@@ -120,28 +63,16 @@ std::string Fact::asString() {
     return "(unknown)";
 }
 
-std::string Fact::typeName(Type t) {
-    switch (t) {
-        case T_UNDEF:
-            return "UNDEF";
-        case T_BOOL:
-            return "BOOL";
-        case T_INT:
-            return "INT";
-        case T_UINT:
-            return "UINT";
-        case T_DOUBLE:
-            return "DOUBLE";
-        case T_STRING:
-            return "STRING";
-    }
-    return "UNKNOWN";
+std::string Fact::getTypeName() const {
+    static constexpr const char *names[] = {"UNDEF", "BOOL", "INT", "UINT", "DOUBLE", "STRING"};
+    return names[getType()];
 }
 
-void Fact::assertType(Type t) {
-    if (t != type) {
-        spdlog::error("'{}': requested type of {}, but the actual type is {}", meta.getName(), typeName(t),
-                      typeName(type));
-        assert(type == t);
-    }
+bool Fact::checkType(Type expected) const {
+    if (getType() == expected)
+        return true;
+
+    spdlog::error("'{}': unexpected fact type {}", meta_.getName(), getTypeName());
+    assert(false && "Fact type mismatch");
+    return false;
 }
