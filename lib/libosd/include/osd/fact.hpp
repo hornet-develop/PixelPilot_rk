@@ -1,17 +1,17 @@
-#ifndef FACT_HPP
-#define FACT_HPP
+#ifndef OSD_FACT_HPP
+#define OSD_FACT_HPP
 
 #include <map>
 #include <string>
 #include <sys/types.h>
+#include <utility>
 #include <variant>
 
-typedef std::map<std::string, std::string> FactTags;
+using FactTags = std::map<std::string, std::string>;
 
 class FactMatcher {
   public:
-    FactMatcher(std::string name, FactTags tags) : name(name), tags(tags) {};
-    FactMatcher(std::string name) : name(name), tags({}) {};
+    explicit FactMatcher(std::string name, FactTags tags = {}) : name(std::move(name)), tags(std::move(tags)) {}
 
     std::string name;
     FactTags tags;
@@ -19,14 +19,18 @@ class FactMatcher {
 
 class FactMeta {
   public:
-    FactMeta();
-    FactMeta(std::string name);
-    FactMeta(std::string name, FactTags tags);
+    FactMeta() = default;
+    explicit FactMeta(std::string name, FactTags tags = {}) : name(std::move(name)), tags(std::move(tags)) {}
 
-    std::string getName();
-    FactTags getTags();
+    std::string getName() const {
+        return name;
+    }
 
-    bool match(FactMatcher matcher);
+    FactTags getTags() const {
+        return tags;
+    }
+
+    bool match(const FactMatcher &matcher) const;
 
   private:
     std::string name;
@@ -37,46 +41,53 @@ class Fact {
   public:
     enum Type { T_UNDEF, T_BOOL, T_INT, T_UINT, T_DOUBLE, T_STRING };
 
-    Fact();
-    Fact(FactMeta meta, bool val);
-    Fact(FactMeta meta, long val);
-    Fact(FactMeta meta, ulong val);
-    Fact(FactMeta meta, double val);
-    Fact(FactMeta meta, std::string val);
-    Fact(FactMeta meta);
+    Fact() = default;
+    explicit Fact(FactMeta meta) : meta_(std::move(meta)) {}
+    Fact(FactMeta meta, bool value) : meta_(std::move(meta)), value_(value) {}
+    Fact(FactMeta meta, long value) : meta_(std::move(meta)), value_(value) {}
+    Fact(FactMeta meta, ulong value) : meta_(std::move(meta)), value_(value) {}
+    Fact(FactMeta meta, double value) : meta_(std::move(meta)), value_(value) {}
+    Fact(FactMeta meta, std::string value) : meta_(std::move(meta)), value_(std::move(value)) {}
 
-    bool isDefined();
+    Fact(FactMeta meta, const char *val) = delete;
 
-    bool getBoolValue();
+    bool isDefined() const {
+        return !std::holds_alternative<std::monostate>(value_);
+    }
 
-    long getIntValue();
+    bool getBoolValue() const;
+    long getIntValue() const;
+    ulong getUintValue() const;
+    double getDoubleValue() const;
+    std::string getStrValue() const;
 
-    ulong getUintValue();
+    bool matches(const FactMatcher &matcher) const;
 
-    double getDoubleValue();
+    Type getType() const {
+        if (value_.valueless_by_exception())
+            return T_UNDEF;
+        return static_cast<Type>(value_.index());
+    }
 
-    std::string getStrValue();
+    std::string getName() const {
+        return meta_.getName();
+    }
 
-    bool matches(FactMatcher matcher);
+    FactTags getTags() const {
+        return meta_.getTags();
+    }
 
-    std::string getTypeName();
-
-    Type getType();
-
-    std::string getName();
-
-    FactTags getTags();
-
-    std::string asString();
+    std::string getTypeName() const;
+    std::string asString() const;
 
   private:
-    Type type = T_UNDEF;
+    // Keep alternatives in the same order as Type.
+    using Value = std::variant<std::monostate, bool, long, ulong, double, std::string>;
 
-    std::string typeName(Type t);
-    void assertType(Type t);
+    bool checkType(Type expected) const;
 
-    FactMeta meta;
-    std::variant<bool, long, ulong, double, std::string> value;
+    FactMeta meta_;
+    Value value_;
 };
 
 #endif
