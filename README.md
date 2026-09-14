@@ -81,7 +81,6 @@ lot of facts to which widgets can subscribe to:
 | `video.decode_and_handover_ms` | uint | Time from the moment packet is received to time it is displayed on screen |
 | `video.decoder_feed_time_ms`   | uint | Time to feed the video packet to hardware decoder                         |
 | `rtp.received_bytes`           | uint | Number of bytes received from rtp stream (published for each packet)      |
-| `osd.custom_message`           | str  | The custom message passed via `--osd-custom-message` feature              |
 
 Pixelpilot is also able to connect to WFB-ng statistics API and extract some of the facts from there.
 Receiving packets statistics (each fact has "id" tag - channel name, eg "video"/"tunnel" etc):

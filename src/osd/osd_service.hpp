@@ -28,7 +28,6 @@ struct OsdServiceParams {
     int zpos = 2;
 
     bool enabled = false;
-    bool custom_message_enabled = false;
 };
 
 class OsdService {
@@ -55,7 +54,6 @@ class OsdService {
     void enqueueFacts(std::vector<Fact> facts);
     void drainFacts();
 
-    void updateCustomMessage();
     void paintBuffer(modeset_buf *buf);
 
     static std::unique_ptr<OsdService> instance_;
