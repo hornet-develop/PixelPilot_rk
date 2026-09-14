@@ -96,7 +96,6 @@ enum AppOption {
     OPT_OSD_REFRESH,
     OPT_OSD_ELEMENTS,
     OPT_OSD_TELEM_LVL,
-    OPT_OSD_CUSTOM_MESSAGE,
     OPT_SCREEN_MODE,
 	OPT_TARGET_FRAME_RATE,
     OPT_DISABLE_VSYNC,
@@ -125,7 +124,6 @@ static const struct option pixelpilot_long_options[] = {
     {"osd-refresh",         required_argument, 0, OPT_OSD_REFRESH},
     {"osd-elements",        required_argument, 0, OPT_OSD_ELEMENTS},
     {"osd-telem-lvl",       required_argument, 0, OPT_OSD_TELEM_LVL},
-    {"osd-custom-message",  no_argument,       0, OPT_OSD_CUSTOM_MESSAGE},
     {"screen-mode",         required_argument, 0, OPT_SCREEN_MODE},
     {"target-frame-rate",   required_argument, 0, OPT_TARGET_FRAME_RATE},
     {"disable-vsync",       no_argument,       0, OPT_DISABLE_VSYNC},
@@ -151,7 +149,6 @@ int video_zpos = 1;
 bool update_osd_video_size = false;
 bool mavlink_dvr_on_arm = false;
 bool enable_osd = false;
-bool osd_custom_message = false;
 bool disable_vsync = false;
 uint32_t refresh_frequency_ms = 1000;
 pthread_mutex_t osd_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -586,17 +583,6 @@ void sigusr2_handler(int signum) {
     // Toggle the disable_vsync flag
     disable_vsync = disable_vsync ^ 1;
 
-    // Open the file for writing
-    std::ofstream outFile("/run/pixelpilot.msg");
-    if (!outFile.is_open()) {
-        spdlog::error("Error opening file!");
-        return; // Exit the function if the file cannot be opened
-    }
-
-    // Write the formatted text to the file
-    outFile << "disable_vsync: " << std::boolalpha << disable_vsync << std::endl;
-    outFile.close();
-
     // Log the new state of disable_vsync
     spdlog::info("disable_vsync: {}", disable_vsync);
 }
@@ -997,8 +983,6 @@ void printHelp() {
     "\n"
     "    --osd-refresh <rate>      - Defines the delay between osd refresh (Default: 1000 ms)\n"
     "\n"
-    "    --osd-custom-message      - Enables the display of /run/pixelpilot.msg (beta feature, may be removed)\n"
-    "\n"
     "    --dvr-template <path>     - Save the video feed (no osd) to the provided filename template.\n"
     "                                DVR is toggled by SIGUSR1 signal\n"
     "                                Supports placeholders %%N - sequence number, %%Y - year, %%m - month, %%d - day,\n"
@@ -1240,10 +1224,6 @@ int main(int argc, char **argv)
         	spdlog::warn("--osd-telem-lvl parameter is removed");
         	break;
 
-    	case OPT_OSD_CUSTOM_MESSAGE: // --osd-custom-message
-        	osd_custom_message = true;
-        	break;
-
     	case OPT_SCREEN_MODE: { // --screen-mode
         	int w = 0, h = 0, r = 0;
         	if (sscanf(optarg, "%dx%d@%d", &w, &h, &r) != 3 || w <= 0 || h <= 0 || r <= 0) {
@@ -1401,7 +1381,6 @@ int main(int argc, char **argv)
 	params.screensaver_image = screensaver_image_path;
 	params.refresh_frequency_ms = refresh_frequency_ms;
 	params.enabled = enable_osd;
-	params.custom_message_enabled = osd_custom_message;
 
 	bool osd_started = OsdService::start(std::move(params));
 	assert(osd_started);

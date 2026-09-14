@@ -117,34 +117,6 @@ void OsdService::drainFacts() {
     }
 }
 
-void OsdService::updateCustomMessage() {
-    if (!params_.enabled || !params_.custom_message_enabled)
-        return;
-
-    static constexpr char FILENAME[] = "/run/pixelpilot.msg";
-    FILE *file = fopen(FILENAME, "r");
-    if (!file)
-        return;
-
-    char message[80]{};
-    if (fgets(message, sizeof(message), file) == nullptr) {
-        perror("Error reading custom OSD message");
-        fclose(file);
-        return;
-    }
-
-    fclose(file);
-    if (unlink(FILENAME) != 0)
-        perror("Error deleting custom OSD message");
-
-    message[sizeof(message) - 1] = '\0';
-    if (char *newline = strchr(message, '\n'))
-        *newline = '\0';
-
-    FactTags tags = {{"file", FILENAME}};
-    osd_.setFact(Fact(FactMeta("osd.custom_message", tags), std::string(message)));
-}
-
 void OsdService::paintBuffer(modeset_buf *buf) {
     cairo_surface_t *surface = cairo_image_surface_create_for_data(buf->map, CAIRO_FORMAT_ARGB32, buf->width, buf->height, buf->stride);
     cairo_t *cr = cairo_create(surface);
@@ -210,7 +182,6 @@ void OsdService::run() {
         const int buf_idx = params_.out->osd_buf_switch ^ 1;
         buf = &params_.out->osd_bufs[buf_idx];
 
-        updateCustomMessage();
         paintBuffer(buf);
 
         ret = pthread_mutex_lock(&osd_mutex);
