@@ -1,6 +1,6 @@
 #include <cassert>
 
-#include <osd/fact.hpp>
+#include <fact.hpp>
 #include <spdlog/spdlog.h>
 
 /**

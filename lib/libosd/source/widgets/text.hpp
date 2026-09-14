@@ -1,7 +1,8 @@
-#ifndef OSD_WIDGETS_PRIMITIVES_HPP
-#define OSD_WIDGETS_PRIMITIVES_HPP
+#ifndef OSD_WIDGETS_TEXT_HPP
+#define OSD_WIDGETS_TEXT_HPP
 
 #include "base.hpp"
+#include "icon.hpp"
 
 #include <string>
 
@@ -40,39 +41,6 @@ class TextWidget : public Widget {
     DrawStyle style_;
 };
 
-class IconWidget : public Widget {
-  public:
-    IconWidget(int pos_x, int pos_y, cairo_surface_t *icon, uint num_args = 0, DrawStyle style = DEFAULT_STYLE);
-    ~IconWidget() override;
-
-    void measure(cairo_t *cr) override;
-    void draw(cairo_t *cr) override;
-    void drawAt(cairo_t *cr, double x, double y) const;
-
-    void setFillColor(const CairoColor &color);
-    void setOutlineColor(const CairoColor &color);
-    void setOutlineWidth(double width);
-    void setStyle(const DrawStyle &style);
-
-    const DrawStyle &style() const;
-
-  protected:
-    cairo_surface_t *icon() const;
-
-    void drawIcon(cairo_t *cr, double x, double y) const;
-    int outlineWidth() const;
-
-  private:
-    static constexpr DrawStyle DEFAULT_STYLE{
-        .fill = {1.0, 1.0, 1.0, 1.0},
-        .outline = {0.0, 0.0, 0.0, 1.0},
-        .outline_width = 1.0,
-    };
-
-    cairo_surface_t *icon_;
-    DrawStyle style_;
-};
-
 class TplTextWidget : public TextWidget {
   public:
     TplTextWidget(int pos_x, int pos_y, std::string tpl, uint num_args);
@@ -85,17 +53,30 @@ class TplTextWidget : public TextWidget {
     std::string tpl_;
 };
 
-class BoxWidget : public Widget {
+class IconTextWidget : public Widget {
   public:
-    BoxWidget(int pos_x, int pos_y, uint width, uint height, CairoColor color);
+    IconTextWidget(int pos_x, int pos_y, cairo_surface_t *icon, std::string text, uint num_args = 0);
 
     void measure(cairo_t *cr) override;
     void draw(cairo_t *cr) override;
 
   private:
-    uint width_;
-    uint height_;
-    CairoColor color_;
+    static constexpr int SPACING = 14;
+
+    IconWidget icon_;
+    TextWidget text_;
+};
+
+class IconTplTextWidget : public TplTextWidget {
+  public:
+    IconTplTextWidget(int pos_x, int pos_y, cairo_surface_t *icon, std::string tpl, uint num_args);
+
+    void measure(cairo_t *cr) override;
+    void draw(cairo_t *cr) override;
+
+  private:
+    static constexpr int SPACING = 14;
+    IconWidget icon_;
 };
 
 #endif

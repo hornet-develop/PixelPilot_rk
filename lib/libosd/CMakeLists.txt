@@ -9,8 +9,12 @@ add_library(osd STATIC
     source/fact.cpp
     source/layout.cpp
     source/widgets/base.cpp
-    source/widgets/primitives.cpp
-    source/widgets/components.cpp
+    source/widgets/graphics.cpp
+    source/widgets/icon.cpp
+    source/widgets/info.cpp
+    source/widgets/status.cpp
+    source/widgets/text.cpp
+    source/widgets/video.cpp
     source/helpers/running_average.cpp
 )
 
