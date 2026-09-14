@@ -11,8 +11,8 @@
 #include <string>
 #include <vector>
 
-#include <osd/fact.hpp>
-#include <osd/osd.hpp>
+#include <fact.hpp>
+#include <osd.hpp>
 
 struct modeset_buf;
 struct modeset_output;

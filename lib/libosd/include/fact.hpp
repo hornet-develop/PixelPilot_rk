@@ -1,5 +1,5 @@
-#ifndef OSD_FACT_HPP
-#define OSD_FACT_HPP
+#ifndef FACT_HPP
+#define FACT_HPP
 
 #include <map>
 #include <string>

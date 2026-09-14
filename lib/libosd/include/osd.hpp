@@ -1,5 +1,5 @@
-#ifndef OSD_OSD_HPP
-#define OSD_OSD_HPP
+#ifndef OSD_HPP
+#define OSD_HPP
 
 #include "fact.hpp"
 

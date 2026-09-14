@@ -1,8 +1,13 @@
-#include <osd/fact.hpp>
-#include <osd/osd.hpp>
+#include <fact.hpp>
+#include <osd.hpp>
 
 #include "layout.hpp"
-#include "widgets/components.hpp"
+#include "widgets/graphics.hpp"
+#include "widgets/icon.hpp"
+#include "widgets/info.hpp"
+#include "widgets/status.hpp"
+#include "widgets/text.hpp"
+#include "widgets/video.hpp"
 
 #include <cairo.h>
 #include <filesystem>

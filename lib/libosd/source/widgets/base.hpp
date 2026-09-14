@@ -2,7 +2,7 @@
 #define OSD_WIDGETS_BASE_HPP
 
 #include <cairo.h>
-#include <osd/fact.hpp>
+#include <fact.hpp>
 
 #include <utility>
 #include <vector>

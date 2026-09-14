@@ -5,7 +5,7 @@
 #include <utility>
 #include <vector>
 
-#include <osd/fact.hpp>
+#include <fact.hpp>
 
 namespace {
 

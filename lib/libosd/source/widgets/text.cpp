@@ -1,6 +1,8 @@
-#include "primitives.hpp"
+#include "text.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <utility>
 
@@ -101,94 +103,6 @@ void TextWidget::setupStroke(cairo_t *cr) const {
 }
 
 // -----------------------------------------------------------------------------
-// IconWidget
-// -----------------------------------------------------------------------------
-
-IconWidget::IconWidget(int pos_x, int pos_y, cairo_surface_t *icon, uint num_args, DrawStyle style)
-    : Widget(pos_x, pos_y, num_args), icon_(icon), style_(style) {}
-
-IconWidget::~IconWidget() {
-    if (icon_)
-        cairo_surface_destroy(icon_);
-}
-
-void IconWidget::measure(cairo_t *) {
-    if (!icon_) {
-        setSize(0, 0);
-        return;
-    }
-    int width = cairo_image_surface_get_width(icon_);
-    int height = cairo_image_surface_get_height(icon_);
-    int outline = outlineWidth();
-
-    setSize(width + outline * 2, height + outline * 2);
-}
-
-void IconWidget::draw(cairo_t *cr) {
-    auto [x, y] = xy(cr);
-    drawIcon(cr, x, y - 20);
-}
-
-void IconWidget::drawAt(cairo_t *cr, double x, double y) const {
-    drawIcon(cr, x, y);
-}
-
-void IconWidget::setFillColor(const CairoColor &color) {
-    style_.fill = color;
-}
-
-void IconWidget::setOutlineColor(const CairoColor &color) {
-    style_.outline = color;
-}
-
-void IconWidget::setOutlineWidth(double width) {
-    if (style_.outline_width == width)
-        return;
-
-    style_.outline_width = width;
-    invalidateMeasure();
-}
-
-void IconWidget::setStyle(const DrawStyle &style) {
-    if (style_.outline_width != style.outline_width)
-        invalidateMeasure();
-    style_ = style;
-}
-
-const DrawStyle &IconWidget::style() const {
-    return style_;
-}
-cairo_surface_t *IconWidget::icon() const {
-    return icon_;
-}
-
-void IconWidget::drawIcon(cairo_t *cr, double x, double y) const {
-    if (!icon_)
-        return;
-
-    cairo_save(cr);
-    int outline = outlineWidth();
-
-    if (outline > 0) {
-        cairo_set_source_rgba(cr, style_.outline.r, style_.outline.g, style_.outline.b, style_.outline.a);
-        for (int dx = -outline; dx <= outline; ++dx) {
-            for (int dy = -outline; dy <= outline; ++dy) {
-                if (dx * dx + dy * dy > outline * outline)
-                    continue;
-                cairo_mask_surface(cr, icon_, x + dx, y + dy);
-            }
-        }
-    }
-    cairo_set_source_rgba(cr, style_.fill.r, style_.fill.g, style_.fill.b, style_.fill.a);
-    cairo_mask_surface(cr, icon_, x, y);
-    cairo_restore(cr);
-}
-
-int IconWidget::outlineWidth() const {
-    return static_cast<int>(std::ceil(style_.outline_width));
-}
-
-// -----------------------------------------------------------------------------
 // TplTextWidget
 // -----------------------------------------------------------------------------
 
@@ -262,21 +176,39 @@ std::string TplTextWidget::renderTpl() const {
 }
 
 // -----------------------------------------------------------------------------
-// BoxWidget
+// IconTextWidget
 // -----------------------------------------------------------------------------
 
-BoxWidget::BoxWidget(int pos_x, int pos_y, uint width, uint height, CairoColor color)
-    : Widget(pos_x, pos_y), width_(width), height_(height), color_(color) {
-    setSize(width_, height_);
+IconTextWidget::IconTextWidget(int pos_x, int pos_y, cairo_surface_t *icon, std::string text, uint num_args)
+    : Widget(pos_x, pos_y, num_args), icon_(0, 0, icon), text_(0, 0, std::move(text)) {}
+
+void IconTextWidget::measure(cairo_t *cr) {
+    measureChild(icon_, cr);
+    measureChild(text_, cr);
+    setSize(icon_.width() + SPACING + text_.width(), std::max(icon_.height(), text_.height()));
 }
 
-void BoxWidget::measure(cairo_t *) {
-    setSize(width_, height_);
-}
-
-void BoxWidget::draw(cairo_t *cr) {
+void IconTextWidget::draw(cairo_t *cr) {
     auto [x, y] = xy(cr);
-    cairo_set_source_rgba(cr, color_.r, color_.g, color_.b, color_.a);
-    cairo_rectangle(cr, x, y, width_, height_);
-    cairo_fill(cr);
+    icon_.drawAt(cr, x, y - 20);
+    text_.drawAt(cr, x + icon_.width() + SPACING, y);
+}
+
+// -----------------------------------------------------------------------------
+// IconTplTextWidget
+// -----------------------------------------------------------------------------
+
+IconTplTextWidget::IconTplTextWidget(int pos_x, int pos_y, cairo_surface_t *icon, std::string tpl, uint num_args)
+    : TplTextWidget(pos_x, pos_y, std::move(tpl), num_args), icon_(0, 0, icon) {}
+
+void IconTplTextWidget::measure(cairo_t *cr) {
+    measureChild(icon_, cr);
+    TplTextWidget::measure(cr);
+    setSize(icon_.width() + SPACING + TplTextWidget::width(), std::max(icon_.height(), TplTextWidget::height()));
+}
+
+void IconTplTextWidget::draw(cairo_t *cr) {
+    auto [x, y] = xy(cr);
+    icon_.drawAt(cr, x, y - 20);
+    drawText(cr, x + icon_.width() + SPACING, y);
 }
