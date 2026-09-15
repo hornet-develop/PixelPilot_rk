@@ -1,5 +1,3 @@
-#include <pthread.h>
-#include <poll.h>
 #include <unistd.h>
 #include <cstring>
 #include <cstdlib>
@@ -13,8 +11,6 @@
 #include <system_error>
 #include <algorithm>
 #include <regex>
-
-#include <rockchip/rk_mpi.h>
 
 #include "spdlog/spdlog.h"
 
@@ -30,24 +26,14 @@ std::atomic<DvrState> dvr_state{DvrState::Idle};
 
 static const int SEQUENCE_PADDING = 4;   // zero-padding width for sequence-numbered filenames
 
-// Max RPC_FRAME entries allowed to sit in the queue before new frames are dropped. Keeps the DVR
-// current: in VideoOnly we carry only the decoder's prime_fd, which the decoder recycles (its
-// MAX_FRAMES pool) soon after we enqueue, so a deep backlog would encode a recycled (wrong) buffer.
-// Keeping this small bounds DVR lateness to a few frames, well inside the recycle window.
-static const size_t DVR_MAX_PENDING_FRAMES = 3;
-
 static const int TS_TIMEBASE_90K = 90000;  // MPEG-TS clock (ticks per second)
 static const int MS_TO_90K       = 90;     // 1 ms = 90 ticks at 90kHz
 
-// Cap on a single frame's duration (90k ticks). A drop burst (e.g. frames lost while the DVR
-// thread blocks on segment rotation) leaves a large pts gap; without this cap the resulting frame
-// would be held for seconds - a freeze. 0.25s is far above any real inter-frame gap, so normal
-// frames are unaffected; it only bounds the pathological case.
+// Cap on a single frame's duration (90k ticks). A drop burst (e.g. frames lost while the encoder
+// rebuilds) leaves a large pts gap; without this cap the resulting frame would be held for
+// seconds - a freeze. 0.25s is far above any real inter-frame gap, so normal frames are unaffected;
+// it only bounds the pathological case.
 static const int MAX_FRAME_DURATION_90K = TS_TIMEBASE_90K / 4;
-
-// Active keyframe clock, in media time - correct at any capture rate. Sets seek granularity: TS has
-// no index, so a player starts at a keyframe.
-static const int64_t KEYFRAME_INTERVAL_90K = 500 * (int64_t)MS_TO_90K;
 
 //Periodic storage guard check runs during recording (free-space / mount check).
 static const int64_t  STORAGE_CHECK_INTERVAL_MS = 3000;
@@ -55,19 +41,8 @@ static const int64_t  STORAGE_CHECK_INTERVAL_MS = 3000;
 // Consecutive failed frame writes (disk full / I/O error) before we fail-stop the recording.
 static const uint32_t MAX_CONSECUTIVE_WRITE_FAILURES = 5;
 
-// Max wait for the DRM writeback capture fence to signal (the VOP finished writing the composited
-// frame into the WB buffer). A timeout means something is wrong; we drop that frame rather than
-// encode a half-written buffer.
-static const int WB_FENCE_TIMEOUT_MS = 200;
-
-// Failed encoder/muxer setups before we give up. Without a cap a permanently broken encoder is
-// re-created on every frame, and cleanup()'s mpi->reset() alone can block 8s - at 60fps that is a
-// retry storm, not a recovery.
-static const int MAX_INIT_ATTEMPTS = 3;
-
-// Consecutive frames lost to per-frame errors (buffer import, capture fence, encoder submit) before
-// we treat the pipeline as broken. These are individually transient, so only a sustained run counts.
-static const int MAX_FRAME_ERROR_STREAK = 60;
+// Failed file opens before we give up on the recording.
+static const int MAX_OPEN_ATTEMPTS = 3;
 
 static int64_t monotonic_ms() {
     struct timespec ts;
@@ -75,109 +50,47 @@ static int64_t monotonic_ms() {
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
-Dvr::Dvr(dvr_thread_params params)
-    : rec_dir(fs::path(params.filename_template).parent_path().string()),
-      storage(rec_dir, params.dvr_min_free_bytes, params.dvr_require_mount) {
-    filename_template           = params.filename_template;
-    dvr_bitrate                 = params.dvr_bitrate;
-    segment_limit_ms            = (int64_t)params.dvr_segment_minutes * 60 * 1000;
-    if (params.enable_osd_in_dvr && params.enable_wb) {
-        // Record the display's composited output (video+OSD) captured via DRM writeback.
-        mode = RecordingMode::VideoWithOsdWriteback;
-        wb_enc_width      = params.wb_width;
-        wb_enc_height     = params.wb_height;
-        wb_enc_hor_stride = params.wb_hor_stride_bytes;
-        wb_enc_ver_stride = params.wb_ver_stride;
-    } else {
-        // Clean video from the decode tap.
-        mode = RecordingMode::VideoOnly;
-    }
-
-    video_frm_width  = params.video_p.video_frm_width;
-    video_frm_height = params.video_p.video_frm_height;
-    enc_fps = params.display_fps > 0 ? (int)params.display_fps : 60;
-}
+Dvr::Dvr(VideoEncoder *enc, char *template_path, int segment_minutes,
+         uint64_t min_free_bytes, bool require_mount, int fps)
+    : encoder(enc),
+      filename_template(template_path),
+      segment_limit_ms((int64_t)segment_minutes * 60 * 1000),
+      nominal_fps(fps > 0 ? fps : 60),
+      rec_dir(fs::path(template_path).parent_path().string()),
+      storage(rec_dir, min_free_bytes, require_mount) {}
 
 Dvr::~Dvr() {}
 
-void Dvr::writeback_frame(dvr_frame_info info) {
-    bool dropped = false;
-    {
-        std::lock_guard<std::mutex> lock(mtx);
-        if (dvrQueue.size() >= DVR_MAX_PENDING_FRAMES) {
-            dropped = true;
-        } else {
-            dvrQueue.push({ .command = dvr_rpc::RPC_FRAME, .frame_info = info });
-        }
-    }
-    if (dropped) {
-        if (info.fence_fd >= 0) {
-            close(info.fence_fd);
-        }
-        pp_wb_release(info.wb_index);
-        return;
-    }
-    cv.notify_one();
-}
-
-void Dvr::frame(dvr_frame_info info) {
-    {
-        std::lock_guard<std::mutex> lock(mtx);
-        if (dvrQueue.size() >= DVR_MAX_PENDING_FRAMES) {
-            return; // backlog full — drop this frame to stay current
-        }
-        dvrQueue.push({ .command = dvr_rpc::RPC_FRAME, .frame_info = info });
-    }
-    cv.notify_one();
-}
-
-// Release the writeback resources a frame carries (capture fence + pool slot). No-op for the
-// decode-tap paths, whose frames have fence_fd/wb_index == -1. Must be called for every writeback
-// frame that does NOT reach encode_and_write_wb(), or the display thread's pool starves.
-static inline void release_wb_frame(dvr_frame_info &fi) {
-    if (fi.fence_fd >= 0) {
-        close(fi.fence_fd);
-        fi.fence_fd = -1;
-    }
-    if (fi.wb_index >= 0) {
-        pp_wb_release(fi.wb_index);
-        fi.wb_index = -1;
-    }
-}
-
-void Dvr::drop_pending_frames() {
-    std::queue<dvr_rpc> kept;
-    while (!dvrQueue.empty()) {
-        if (dvrQueue.front().command != dvr_rpc::RPC_FRAME) {
-            kept.push(dvrQueue.front());
-        } else {
-            release_wb_frame(dvrQueue.front().frame_info); // free WB slot/fence of discarded frames
-        }
-        dvrQueue.pop();
-    }
-    dvrQueue.swap(kept);
-}
-
-void Dvr::set_video_params(uint32_t video_frm_w, uint32_t video_frm_h) {
-    enqueue_dvr_command({ .command = dvr_rpc::RPC_SET_PARAMS, .video_p = { video_frm_w, video_frm_h }}, true);
-}
-
-void Dvr::restart() {
-    enqueue_dvr_command({ .command = dvr_rpc::RPC_RESTART }, true);
-}
-
 void Dvr::start_recording() {
-    enqueue_dvr_command({ .command = dvr_rpc::RPC_START }, false);
+    encoder->post([this] {
+        if (dvr_is_disabled() || recording_armed.load(std::memory_order_relaxed)) {
+            return;
+        }
+        start();
+    }, false);
 }
 
 void Dvr::stop_recording() {
     DvrState expected = DvrState::Recording;
     dvr_state.compare_exchange_strong(expected, DvrState::Idle, std::memory_order_acq_rel);
-    enqueue_dvr_command({ .command = dvr_rpc::RPC_STOP }, true);
+    encoder->post([this] {
+        if (recording_armed.load(std::memory_order_relaxed)) {
+            stop();
+        }
+    }, true);
 }
 
 void Dvr::toggle_recording() {
-    enqueue_dvr_command({ .command = dvr_rpc::RPC_TOGGLE }, false);
+    encoder->post([this] {
+        if (dvr_is_disabled()) {
+            return;
+        }
+        if (recording_armed.load(std::memory_order_relaxed)) {
+            stop();
+        } else {
+            start();
+        }
+    }, false);
 }
 
 void Dvr::disable(const std::string &reason) {
@@ -186,164 +99,82 @@ void Dvr::disable(const std::string &reason) {
         return;
     }
     spdlog::error("[ DVR ] disabling DVR for this session: {}", reason);
-    enqueue_dvr_command({ .command = dvr_rpc::RPC_DISABLE }, true);
+    encoder->post([this] {
+        if (recording_armed.load(std::memory_order_relaxed)) {
+            stop();
+        }
+        osd_publish_bool_fact("dvr.recording", NULL, 0, false);
+    }, true);
 }
 
 void Dvr::shutdown() {
     DvrState expected = DvrState::Recording;
     dvr_state.compare_exchange_strong(expected, DvrState::Idle, std::memory_order_acq_rel);
-    enqueue_dvr_command({ .command = dvr_rpc::RPC_SHUTDOWN }, true);
+    encoder->post([this] {
+        if (recording_armed.load(std::memory_order_relaxed)) {
+            stop();
+        }
+    }, true);
 }
 
-void Dvr::enqueue_dvr_command(dvr_rpc rpc, bool drop_frames) {
-    {
-        std::lock_guard<std::mutex> lock(mtx);
-        if (drop_frames) {
-            drop_pending_frames();
-        }
-        dvrQueue.push(rpc);
-    }
-    cv.notify_one();
+bool Dvr::active() const {
+    return recording_armed.load(std::memory_order_acquire);
 }
 
-void *Dvr::__THREAD__(void *param) {
-    pthread_setname_np(pthread_self(), "__DVR");
-    ((Dvr *)param)->loop();
-    return nullptr;
+void Dvr::on_access_unit(const AccessUnit &au) {
+    if (!recording_armed.load(std::memory_order_relaxed)) {
+        return;
+    }
+
+    // Roll to the next file only on a keyframe, so every recording - and every rotated segment -
+    // opens on an IDR carrying its own VPS/SPS/PPS. Until one arrives we keep writing to the file
+    // already open, so the rotation seam loses nothing.
+    if (pending_open) {
+        if (!au.keyframe) {
+            return;
+        }
+        if (!open_next_file()) {
+            return;
+        }
+        pending_open = false;
+    }
+    if (!writer.is_open()) {
+        return;
+    }
+
+    if (writer.write_nal(au.data, au.len, next_frame_duration(au.pts_ms))) {
+        frames_written++;
+    }
+
+    // FAT32 per-file size cap: roll before reaching the 4GB.
+    if (max_file_bytes > 0 && writer.size() >= max_file_bytes) {
+        spdlog::info("[ DVR ] file size cap reached, starting new file");
+        request_rotate();
+    } else if (segment_limit_ms > 0 && segment_video_ticks >= segment_limit_ms * MS_TO_90K) {
+        spdlog::info("[ DVR ] segment time limit reached, starting new file");
+        request_rotate();
+    }
+
+    const uint32_t fails = writer.consecutive_write_failures();
+    if (fails >= MAX_CONSECUTIVE_WRITE_FAILURES) {
+        fail(std::to_string(fails) + " consecutive write failures (disk full or I/O error)", false);
+    }
 }
 
-void Dvr::loop() {
-    while (true) {
-        std::unique_lock<std::mutex> lock(mtx);
-        bool has_rpc = cv.wait_for(lock, std::chrono::seconds(1), [this] { return !this->dvrQueue.empty(); });      
-        if (!has_rpc) {
-            lock.unlock();
-            update_storage_status(true);
-            continue;
-        }
-        dvr_rpc rpc = dvrQueue.front();
-        dvrQueue.pop();
-        lock.unlock();
-
-        update_storage_status(false);
-
-        // Once disabled, only SHUTDOWN and the DISABLE finalize still mean anything. Frames must
-        // still be released or the display thread's writeback pool starves.
-        if (dvr_is_disabled() &&
-            rpc.command != dvr_rpc::RPC_SHUTDOWN && rpc.command != dvr_rpc::RPC_DISABLE) {
-            if (rpc.command == dvr_rpc::RPC_FRAME) {
-                release_wb_frame(rpc.frame_info);
-            }
-            continue;
-        }
-
-        switch (rpc.command) {
-        case dvr_rpc::RPC_SET_PARAMS:
-            spdlog::debug("[ DVR ] got rpc SET_PARAMS");
-            video_frm_width = rpc.video_p.video_frm_width;
-            video_frm_height = rpc.video_p.video_frm_height;
-            [[fallthrough]];
-        case dvr_rpc::RPC_RESTART:
-            spdlog::debug("[ DVR ] got rpc RPC_RESTART");
-            if (recording_armed)
-                rotate_recording_file();
-            break;
-        case dvr_rpc::RPC_START:
-            spdlog::debug("[ DVR ] got rpc START");
-            if (recording_armed)
-                break;
-            start();
-            break;
-        case dvr_rpc::RPC_STOP:
-            spdlog::debug("[ DVR ] got rpc STOP");
-            if (recording_armed)
-                stop();
-            break;
-        case dvr_rpc::RPC_TOGGLE:
-            spdlog::debug("[ DVR ] got rpc TOGGLE");
-            if (!recording_armed) {
-                start();
-            } else {
-                stop();
-            }
-            break;
-        case dvr_rpc::RPC_FRAME: {
-            // FAT32 per-file size cap: rotate before reaching the 4GB.
-            if (_ready_to_write && max_file_bytes > 0 && writer.size() >= max_file_bytes) {
-                spdlog::info("[ DVR ] file size cap reached, starting new file");
-                rotate_recording_file();
-            }
-
-            if (_ready_to_write && segment_limit_ms > 0 &&
-                segment_video_ticks >= segment_limit_ms * MS_TO_90K) {
-                spdlog::info("[ DVR ] segment time limit reached, starting new file");
-                rotate_recording_file();
-            }
-            if (!_ready_to_write) {
-                if (recording_armed && video_frm_width > 0 && video_frm_height > 0) {
-                    if (init_attempts >= MAX_INIT_ATTEMPTS) {
-                        bool storage_fault = !writer.is_open();
-                        fail(storage_fault
-                                 ? "could not open a recording file after " +
-                                       std::to_string(init_attempts) + " attempts"
-                                 : "encoder/muxer setup failed " + std::to_string(init_attempts) +
-                                       " times",
-                             !storage_fault);
-                        release_wb_frame(rpc.frame_info);
-                        break;
-                    }
-                    init_attempts++;
-                    if (writer.is_open() || open_output_file()) {
-                        init();
-                    }
-                    if (_ready_to_write) {
-                        init_attempts = 0;
-                    }
-                }
-                if (!_ready_to_write) {
-                    const char *why = !recording_armed      ? "not recording"
-                                    : (video_frm_width == 0 || video_frm_height == 0)
-                                                             ? "awaiting video params"
-                                    : !writer.is_open()      ? "could not open the recording file"
-                                                             : "encoder setup failed";
-                    spdlog::debug("[ DVR ] RPC_FRAME dropped: {}", why);
-                    release_wb_frame(rpc.frame_info);
-                    break;
-                }
-            }
-            encode_and_write(rpc.frame_info);
-
-            if (frame_error_streak >= MAX_FRAME_ERROR_STREAK) {
-                fail(std::to_string(frame_error_streak) + " consecutive frames failed to encode", true);
-                break;
-            }
-            {
-                uint32_t fails = writer.consecutive_write_failures();
-                if (fails >= MAX_CONSECUTIVE_WRITE_FAILURES) {
-                    fail(std::to_string(fails) + " consecutive write failures (disk full or I/O error)",
-                         false);
-                }
-            }
-            break;
-        }
-        case dvr_rpc::RPC_DISABLE:
-            // Another thread already latched Disabled and logged why; just finalize what is open.
-            spdlog::debug("[ DVR ] got rpc DISABLE");
-            if (recording_armed) {
-                stop();
-            }
-            osd_publish_bool_fact("dvr.recording", NULL, 0, false);
-            break;
-        case dvr_rpc::RPC_SHUTDOWN:
-            spdlog::debug("[ DVR ] got rpc SHUTDOWN");
-            goto end;
-        }
+void Dvr::on_encoder_reset(int, int) {
+    if (recording_armed.load(std::memory_order_relaxed)) {
+        request_rotate();
     }
-end:
-    if (recording_armed) {
-        stop();
+}
+
+void Dvr::on_encoder_failed(const std::string &reason) {
+    if (recording_armed.load(std::memory_order_relaxed)) {
+        fail(reason, true);
     }
-    spdlog::info("DVR thread done.");
+}
+
+void Dvr::on_tick(bool idle) {
+    update_storage_status(idle);
 }
 
 static std::string build_sequence_pattern(const std::string &filename_pattern) {
@@ -454,18 +285,18 @@ int Dvr::start() {
         return -1;
     }
 
-    frames_submitted = 0;
-    frames_written   = 0;
-    rec_start_pts    = -1;
-    while (!submitted_pts.empty()) {
-        submitted_pts.pop();
-    }
-    init_attempts     = 0;
-    frame_error_streak = 0;
+    frames_written = 0;
+    rec_start_pts  = -1;
+    segment_video_ticks = 0;
+    open_attempts  = 0;
 
-    recording_armed = true;
+    pending_open = true;
+    recording_armed.store(true, std::memory_order_release);
     osd_publish_bool_fact("dvr.recording", NULL, 0, true);
     dvr_state.store(DvrState::Recording, std::memory_order_release);
+
+    encoder->consumers_changed();
+    encoder->request_keyframe();
     return 0;
 }
 
@@ -478,6 +309,16 @@ bool Dvr::open_output_file() {
         return false;
     }
     current_filename = ts_filename;
+    // Start the muxer for this file. Without it the writer thread discards every access unit and
+    // the file stays empty, while write_nal() still reports success because it only enqueues.
+    if (!writer.begin_video(encoder->width(), encoder->height())) {
+        spdlog::error("[ DVR ] could not start the muxer for {}", current_filename);
+        writer.close();
+        std::error_code ec;
+        fs::remove(current_filename, ec);
+        current_filename.clear();
+        return false;
+    }
 
     max_file_bytes = storage.file_size_cap();
     session_dev_known  = storage.device_id(session_dev);
@@ -501,66 +342,8 @@ bool Dvr::open_output_file() {
     return true;
 }
 
-void Dvr::init() {
-    int fps = enc_fps;
-    if (video_frm_width == 0 || video_frm_height == 0 || fps <= 0) {
-        spdlog::warn("[ DVR ] invalid video params {}x{} @{}",
-                     video_frm_width, video_frm_height, fps);
-        return;
-    }
-
-
-    // Tear down any previous encoder (re-init on resolution change).
-    _ready_to_write = 0;
-    encoder.cleanup();
-
-    int enc_w, enc_h, enc_hor, enc_ver, mux_w, mux_h;
-    if (mode == RecordingMode::VideoWithOsdWriteback) {
-        // The display thread captures the composited output (video + OSD) the VOP wrote into the
-        // writeback buffers at display resolution. Encoder geometry is fixed to those buffers.
-        enc_w = (int)wb_enc_width;
-        enc_h = (int)wb_enc_height;
-        enc_hor = (int)wb_enc_hor_stride;
-        enc_ver = (int)wb_enc_ver_stride;
-        mux_w = (int)wb_enc_width;
-        mux_h = (int)wb_enc_height;
-        spdlog::info("[ DVR ] setting up dvr encoder {}x{} @{}fps bitrate={} H265 [writeback WYSIWYG]",
-                     wb_enc_width, wb_enc_height, fps, dvr_bitrate);
-    }
-    else {
-        enc_w = (int)video_frm_width;
-        enc_h = (int)video_frm_height;
-        enc_hor = (int)((video_frm_width  + 15) & ~15u);
-        enc_ver = (int)((video_frm_height + 15) & ~15u);
-        mux_w = (int)video_frm_width;
-        mux_h = (int)video_frm_height;
-        spdlog::info("[ DVR ] setting up dvr encoder {}x{} @{}fps bitrate={} H265 [zero-copy]",
-                     video_frm_width, video_frm_height, fps, dvr_bitrate);
-    }
-
-    if (!encoder.init(enc_w, enc_h, enc_hor, enc_ver, fps, dvr_bitrate)) {
-        return;
-    }
-
-    if (!writer.begin_video(mux_w, mux_h)) {
-        encoder.cleanup();
-        return;
-    }
-
-    _ready_to_write = 1;
-    spdlog::info("[ DVR ] encoder ready");
-}
-
-int Dvr::next_frame_duration() {
-    const int default_duration = TS_TIMEBASE_90K / enc_fps;
-
-    if (submitted_pts.empty()) {
-        const int d = last_good_duration > 0 ? last_good_duration : default_duration;
-        segment_video_ticks += d;
-        return d;
-    }
-    int64_t pts = submitted_pts.front();
-    submitted_pts.pop();
+int Dvr::next_frame_duration(int64_t pts) {
+    const int default_duration = TS_TIMEBASE_90K / nominal_fps;
 
     if (rec_start_pts < 0) {
         rec_start_pts = pts;   // anchor the segment on its first frame
@@ -582,148 +365,9 @@ int Dvr::next_frame_duration() {
     return (int)duration;
 }
 
-MppBuffer Dvr::import_decoder_buffer(const dvr_frame_info &info) {
-    // Import the decoded frame's DRM buffer directly as encoder input.
-    MppBufferInfo buf_info;
-    memset(&buf_info, 0, sizeof(buf_info));
-    buf_info.type = MPP_BUFFER_TYPE_DRM;
-    buf_info.fd   = info.prime_fd;
-    buf_info.size = info.buf_size;
-
-    MppBuffer dec_buf = nullptr;
-    if (mpp_buffer_import(&dec_buf, &buf_info) || !dec_buf) {
-        spdlog::warn("[ DVR ] mpp_buffer_import failed");
-        return nullptr;
-    }
-    return dec_buf;
-}
-
-void Dvr::maybe_request_idr() {
-    if (frames_submitted == 0 || segment_video_ticks - last_idr_ticks >= KEYFRAME_INTERVAL_90K) {
-        encoder.request_idr();
-        last_idr_ticks = segment_video_ticks;
-    }
-}
-
-void Dvr::encode_and_write_wb(dvr_frame_info info) {
-    // 1) Wait for the VOP to finish writing the composited frame into this WB buffer.
-    if (info.fence_fd >= 0) {
-        struct pollfd pfd = { info.fence_fd, POLLIN, 0 };
-        int pr = poll(&pfd, 1, WB_FENCE_TIMEOUT_MS);
-        close(info.fence_fd);
-        if (pr <= 0) {
-            spdlog::warn("[ DVR ] writeback fence wait failed/timed out ({}), dropping frame", pr);
-            pp_wb_release(info.wb_index);
-            frame_error_streak++;
-            return;
-        }
-    }
-
-    // 2) Drain the previous submission (the encoder reads a frame for one more cycle - IPPP
-    //    latency, same as the VideoOnly path). After the drain MPP is done with the previous WB
-    //    buffer, so release that pool slot back to the display thread.
-    encoder.drain([this](const uint8_t *data, int len) {
-        if (writer.write_nal(data, len, next_frame_duration())) {
-            frames_written++;
-        }
-    });
-    if (wb_pending_index >= 0) {
-        pp_wb_release(wb_pending_index);
-        wb_pending_index = -1;
-    }
-
-    // 3) Import & submit the freshly-composited buffer; hold its slot until the next drain.
-    MppBuffer buf = import_decoder_buffer(info);
-    if (!buf) {
-        pp_wb_release(info.wb_index);
-        frame_error_streak++;
-        return;
-    }
-    maybe_request_idr();
-    int ret = encoder.submit(buf, (int64_t)info.pts,
-                             (int)wb_enc_width, (int)wb_enc_height,
-                             (int)wb_enc_hor_stride, (int)wb_enc_ver_stride);
-    mpp_buffer_put(buf); // encoder holds its own ref; release our import ref
-    if (ret == 0) {
-        submitted_pts.push((int64_t)info.pts);
-        frames_submitted++;
-        wb_pending_index = info.wb_index;
-        frame_error_streak = 0;
-    } else {
-        pp_wb_release(info.wb_index);
-        frame_error_streak++;
-    }
-}
-
-void Dvr::encode_and_write(dvr_frame_info info) {
-    if (!encoder.ready() || !_ready_to_write) {
-        spdlog::warn("[ DVR ] encode_and_write skipped — encoder not ready");
-        release_wb_frame(info); // no-op for decode-tap modes
-        return;
-    }
-
-    if (mode == RecordingMode::VideoWithOsdWriteback) {
-        encode_and_write_wb(info);
-        return;
-    }
-
-    // VideoOnly: zero-copy, done inline on this thread (drain previous output, import, submit).
-    encoder.drain([this](const uint8_t *data, int len) {
-        if (writer.write_nal(data, len, next_frame_duration())) {
-            frames_written++;
-        }
-    });
-
-    // Sync encoder config strides to actual decoded frame strides
-    if ((int)info.hor_stride != encoder.get_hor_stride() || (int)info.ver_stride != encoder.get_ver_stride()) {
-        encoder.sync_strides((int)info.hor_stride, (int)info.ver_stride);
-    }
-
-    MppBuffer buf = import_decoder_buffer(info);
-    if (!buf) {
-        frame_error_streak++;
-        return;
-    }
-    maybe_request_idr();
-    int ret = encoder.submit(buf, (int64_t)info.pts,
-                             (int)info.width, (int)info.height,
-                             (int)info.hor_stride, (int)info.ver_stride);
-    mpp_buffer_put(buf); // encoder holds its own ref; release ours
-    if (ret == 0) {
-        submitted_pts.push((int64_t)info.pts);
-        frames_submitted++;
-        frame_error_streak = 0;
-    } else {
-        frame_error_streak++;
-    }
-}
-
 void Dvr::finalize_current_file() {
-    if (!writer.is_open() && !encoder.ready() && current_filename.empty()) {
+    if (!writer.is_open() && current_filename.empty()) {
         return;
-    }
-    if (encoder.ready() && _ready_to_write) {
-        // Write output from the last submission, then flush the encoder
-        encoder.drain([this](const uint8_t *data, int len) {
-            if (writer.write_nal(data, len, next_frame_duration())) {
-                frames_written++;
-            }
-        });
-        encoder.flush([this](const uint8_t *data, int len) -> bool {
-            if (frames_written >= frames_submitted) {
-                return false; // all submitted frames accounted for - stop
-            }
-            if (writer.write_nal(data, len, next_frame_duration())) {
-                frames_written++;
-            }
-            return true;
-        });
-    }
-
-    // Writeback mode: the last submitted buffer has now been drained/flushed, so release its slot.
-    if (wb_pending_index >= 0) {
-        pp_wb_release(wb_pending_index);
-        wb_pending_index = -1;
     }
 
     if (!current_filename.empty()) {
@@ -731,11 +375,8 @@ void Dvr::finalize_current_file() {
                      frames_written, segment_video_ticks / 90000.0);
     }
 
-    encoder.cleanup();
-
     bool empty = (frames_written == 0);
     bool finalized_ok = writer.close();
-    _ready_to_write = 0;
 
     if (!empty && !finalized_ok && !current_filename.empty()) {
         spdlog::error("[ DVR ] recording truncated (storage stopped responding): {} — "
@@ -754,15 +395,47 @@ void Dvr::finalize_current_file() {
     }
     current_filename.clear();
     segment_video_ticks = 0;
-    last_idr_ticks = 0;
+}
+
+void Dvr::request_rotate() {
+    if (pending_open) {
+        return;
+    }
+    pending_open = true;
+    encoder->request_keyframe();
+}
+
+bool Dvr::open_next_file() {
+    finalize_current_file();
+    frames_written = 0;
+    rec_start_pts  = -1;
+    segment_video_ticks = 0;
+
+    if (!open_output_file()) {
+        if (++open_attempts >= MAX_OPEN_ATTEMPTS) {
+            fail("could not open a recording file after " + std::to_string(open_attempts) +
+                     " attempts",
+                 false);
+        }
+        return false;
+    }
+    open_attempts = 0;
+    return true;
+}
+
+bool Dvr::file_active() const {
+    return recording_armed.load(std::memory_order_relaxed) && writer.is_open();
 }
 
 void Dvr::stop() {
+    encoder->drain_pending();
     finalize_current_file();
-    recording_armed = false;
+    pending_open = false;
+    recording_armed.store(false, std::memory_order_release);
     osd_publish_bool_fact("dvr.recording", NULL, 0, false);
     DvrState expected = DvrState::Recording;
     dvr_state.compare_exchange_strong(expected, DvrState::Idle, std::memory_order_acq_rel);
+    encoder->consumers_changed();
 }
 
 void Dvr::fail(const std::string &reason, bool fatal) {
@@ -780,13 +453,6 @@ void Dvr::fail(const std::string &reason, bool fatal) {
     }
 }
 
-void Dvr::rotate_recording_file() {
-    finalize_current_file();
-    if (start() != 0) {
-        fail("storage not ready for the next recording file", false);
-    }
-}
-
 void Dvr::update_storage_status(bool force_update) {
     const int64_t now_ms = monotonic_ms();
     if (!force_update && now_ms - last_storage_check_ms < STORAGE_CHECK_INTERVAL_MS) {
@@ -795,7 +461,7 @@ void Dvr::update_storage_status(bool force_update) {
     last_storage_check_ms = now_ms;
 
     if (!storage.mount_ok()) {
-        if (_ready_to_write) {
+        if (file_active()) {
             fail("storage no longer mounted", false);
         }
         if (storage_status_dev_known) {
@@ -809,7 +475,7 @@ void Dvr::update_storage_status(bool force_update) {
 
     dev_t now_dev = 0;
     if (!storage.device_id(now_dev)) {
-        if (_ready_to_write && session_dev_known) {
+        if (file_active() && session_dev_known) {
             fail("recording storage was removed", false);
         }
         spdlog::warn("[ DVR ] failed to get recording storage device id");
@@ -819,7 +485,7 @@ void Dvr::update_storage_status(bool force_update) {
         return;
     }
     const bool same_recording_storage = session_dev_known && now_dev == session_dev;
-    if (_ready_to_write && session_dev_known && !same_recording_storage) {
+    if (file_active() && session_dev_known && !same_recording_storage) {
         fail("recording storage was removed", false);
     }
 
@@ -835,11 +501,11 @@ void Dvr::update_storage_status(bool force_update) {
         storage_status_dev = now_dev;
         storage_status_dev_known = true;
         storage_total_known = true;
-    } 
-    else if (_ready_to_write && session_free_known && same_recording_storage) {
+    }
+    else if (file_active() && session_free_known && same_recording_storage) {
         const uint64_t written = writer.size();
         available_bytes = session_free_at_start > written ? session_free_at_start - written : 0;
-    } 
+    }
     else if (!storage.free_bytes(available_bytes)) {
         spdlog::warn("[ DVR ] failed to get recording storage free space");
 
@@ -847,13 +513,13 @@ void Dvr::update_storage_status(bool force_update) {
         return;
     }
 
-    if (_ready_to_write && session_free_known && !storage.has_enough_free(available_bytes)) {
+    if (file_active() && session_free_known && !storage.has_enough_free(available_bytes)) {
         fail("low free space (~" + std::to_string(available_bytes / (1024 * 1024)) +
                                  "MB left, need " + std::to_string(storage.min_free() / (1024 * 1024)) + "MB)",
                              false);
     }
 
-    const bool low_space = available_bytes <= storage.min_free() || 
+    const bool low_space = available_bytes <= storage.min_free() ||
                            (storage_total_bytes > 0 && available_bytes < storage_total_bytes / 10);
     const uint64_t dvr_available_bytes = available_bytes > storage.min_free() ? available_bytes - storage.min_free() : 0;
 

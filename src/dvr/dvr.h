@@ -1,66 +1,62 @@
 #ifndef DVR_H
 #define DVR_H
 
-#include <queue>
-#include <mutex>
+#include <atomic>
 #include <string>
-#include <condition_variable>
 
 #include "dvr_common.h"
-#include "mpp_encoder.h"
+#include "../encoder/stream_consumer.h"
+#include "../encoder/video_encoder.h"
 #include "ts_writer.h"
 #include "storage_guard.h"
 
-class Dvr {
+// Records the encoded stream to segmented MPEG-TS files. A consumer of VideoEncoder, not its owner:
+// it never sees a captured frame, only finished access units, and it runs entirely on the encoder
+// thread (control operations are posted there, so nothing here needs its own lock).
+class Dvr : public StreamConsumer {
 public:
-    explicit Dvr(dvr_thread_params params);
-    ~Dvr();
+    Dvr(VideoEncoder *encoder, char *filename_template, int segment_minutes,
+        uint64_t min_free_bytes, bool require_mount, int nominal_fps);
+    ~Dvr() override;
 
-    void frame(dvr_frame_info info);
-    // Writeback (WYSIWYG) ingress: fed the composited display output from the display thread
-    // (VideoWithOsdWriteback mode) instead of decoded frames from the decode thread.
-    void writeback_frame(dvr_frame_info info);
-    void set_video_params(uint32_t video_frm_width, uint32_t video_frm_height);
-    void restart();
+    // Control. Safe from any thread; each posts onto the encoder thread.
     void start_recording();
     void stop_recording();
     void toggle_recording();
-    // Latch the DVR off for the rest of the process from any thread (the display thread uses this
-    // when writeback commits keep failing). Returns immediately; the DVR thread finalizes the file.
+    // Latch the DVR off for the rest of the process (the display thread uses this when writeback
+    // commits keep failing). Returns immediately; the file is finalized on the encoder thread.
     void disable(const std::string &reason);
+    // Finalize any open recording. Call before stopping the encoder thread.
     void shutdown();
 
-    static void *__THREAD__(void *context);
-private:
-    void enqueue_dvr_command(dvr_rpc rpc, bool drop_frames);
-    void drop_pending_frames();
+    // --- StreamConsumer ---
+    bool active() const override;
+    void on_access_unit(const AccessUnit &au) override;
+    void on_encoder_reset(int width, int height) override;
+    void on_encoder_failed(const std::string &reason) override;
+    void on_tick(bool idle) override;
 
-    void loop();
+private:
     int  start();
-    bool open_output_file();
     void stop();
     void fail(const std::string &reason, bool fatal);
-    void rotate_recording_file();
+    bool open_next_file();          // finalize whatever is open, then open the next one
+    bool open_output_file();
     void finalize_current_file();
-    void init();
     std::string generate_filename();
-    int  next_frame_duration();
-    MppBuffer import_decoder_buffer(const dvr_frame_info &info);
-    void encode_and_write(dvr_frame_info info);
-    void encode_and_write_wb(dvr_frame_info info);
-    void maybe_request_idr();
+    int  next_frame_duration(int64_t pts_ms);
+    void request_rotate();          // roll to a new file at the next keyframe
     void update_storage_status(bool force_update);
+    bool file_active() const;
 
-    std::queue<dvr_rpc> dvrQueue;
-    std::mutex mtx;
-    std::condition_variable cv;
+    VideoEncoder *encoder;
 
     char *filename_template;
-    int  dvr_bitrate = 8000000;
     int64_t segment_limit_ms = 0;
     int64_t segment_video_ticks = 0;
-    int64_t last_idr_ticks = 0;
-    RecordingMode mode = RecordingMode::VideoOnly;
+    // Nominal source rate, used only for the fallback frame duration when a real pts delta is
+    // unusable. The encoder owns the actual rate.
+    int nominal_fps = 0;
 
     std::string rec_dir;
     StorageGuard storage;
@@ -76,37 +72,19 @@ private:
     uint64_t storage_total_bytes = 0;
     bool storage_total_known = false;
 
-    bool recording_armed = false;
+    // Read by other threads through active(), written on the encoder thread.
+    std::atomic<bool> recording_armed{false};
+    // Waiting for a keyframe before opening the next file, so every recording starts decodable.
+    // Until it clears we keep writing to the file already open, so a rotation loses no frames.
+    bool pending_open = false;
+    int  open_attempts = 0;
 
-    // Recording frame rate = the display refresh rate (the writeback recording is a screen capture,
-    // so its natural rate is the display's).
-    int enc_fps = 0;
-
-    uint32_t video_frm_width = 0;
-    uint32_t video_frm_height = 0;
-
-    // Writeback mode geometry (VideoWithOsdWriteback): the composited buffer the display thread
-    // hands us, always NV12.
-    uint32_t wb_enc_width = 0;
-    uint32_t wb_enc_height = 0;
-    uint32_t wb_enc_hor_stride = 0;   // bytes (Y stride for NV12, or BGRA byte stride)
-    uint32_t wb_enc_ver_stride = 0;   // aligned rows (matches the WB buffer's CbCr plane offset)
-    int      wb_pending_index = -1;
-
-    int _ready_to_write = 0;
-    int init_attempts = 0;        // failed encoder/muxer setups for the current file
-    int frame_error_streak = 0;   // consecutive frames lost to import/fence/submit errors
-
-    MppEncoder    encoder;
-    TsWriter      writer;
-
+    TsWriter writer;
     std::string current_filename;
 
-    uint32_t frames_submitted = 0;
-    uint32_t frames_written   = 0;   // frames handed to the writer (enqueued), not yet on disk
-    std::queue<int64_t> submitted_pts;   // FIFO of submitted frame pts (ms), encode order
-    int64_t  rec_start_pts = -1;         // feed-pts (ms) of the first frame of the current segment
-    int      last_good_duration = 0;     // last computed duration (90k ticks); fallback
+    uint32_t frames_written = 0;     // frames handed to the writer (enqueued), not yet on disk
+    int64_t  rec_start_pts = -1;     // feed-pts (ms) of the first frame of the current segment
+    int      last_good_duration = 0; // last computed duration (90k ticks); fallback
 };
 
 #endif

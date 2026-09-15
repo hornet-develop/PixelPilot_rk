@@ -19,8 +19,12 @@ set(SOURCE_FILES
         src/rtp_receiver.hpp
         src/rtp_receiver.cpp
         src/dvr/dvr_common.h
-        src/dvr/mpp_encoder.h
-        src/dvr/mpp_encoder.cpp
+        src/encoder/encoder_common.h
+        src/encoder/stream_consumer.h
+        src/encoder/mpp_encoder.h
+        src/encoder/mpp_encoder.cpp
+        src/encoder/video_encoder.h
+        src/encoder/video_encoder.cpp
         src/dvr/ts_writer.h
         src/dvr/ts_writer.cpp
         src/dvr/storage_guard.h

@@ -9,7 +9,7 @@
 #include "mpp_encoder.h"
 
 // Backstop only, and a frame COUNT (rc:gop = fps * this), so its real-time interval drifts with the
-// capture rate. The DVR's KEYFRAME_INTERVAL_90K in dvr.cpp is the active clock and always fires
+// capture rate. The encoder's KEYFRAME_INTERVAL_MS is the active clock and always fires
 // first; this just guarantees keyframes if request_idr() ever stops working.
 static const int GOP_SECONDS = 2;
 
@@ -20,27 +20,27 @@ bool MppEncoder::init(int width, int height, int hor_stride, int ver_stride,
 
     int ret = mpp_create(&ctx, &mpi);
     if (ret) {
-        spdlog::error("[ DVR MppEncoder ] mpp_create failed {}", ret);
+        spdlog::error("[ MppEncoder ] mpp_create failed {}", ret);
         return false;
     }
 
     ret = mpp_init(ctx, MPP_CTX_ENC, MPP_VIDEO_CodingHEVC);
     if (ret) {
-        spdlog::error("[ DVR MppEncoder ] mpp_init failed {}", ret);
+        spdlog::error("[ MppEncoder ] mpp_init failed {}", ret);
         cleanup();
         return false;
     }
 
     ret = mpp_enc_cfg_init(&cfg);
     if (ret) {
-        spdlog::error("[ DVR MppEncoder ] mpp_enc_cfg_init failed {}", ret);
+        spdlog::error("[ MppEncoder ] mpp_enc_cfg_init failed {}", ret);
         cleanup();
         return false;
     }
 
     ret = mpi->control(ctx, MPP_ENC_GET_CFG, cfg);
     if (ret) {
-        spdlog::error("[ DVR MppEncoder ] MPP_ENC_GET_CFG failed {}", ret);
+        spdlog::error("[ MppEncoder ] MPP_ENC_GET_CFG failed {}", ret);
         cleanup();
         return false;
     }
@@ -68,7 +68,7 @@ bool MppEncoder::init(int width, int height, int hor_stride, int ver_stride,
 
     ret = mpi->control(ctx, MPP_ENC_SET_CFG, cfg);
     if (ret) {
-        spdlog::error("[ DVR MppEncoder ] MPP_ENC_SET_CFG failed {}", ret);
+        spdlog::error("[ MppEncoder ] MPP_ENC_SET_CFG failed {}", ret);
         cleanup();
         return false;
     }
@@ -79,7 +79,7 @@ bool MppEncoder::init(int width, int height, int hor_stride, int ver_stride,
         MppEncHeaderMode header_mode = MPP_ENC_HEADER_MODE_EACH_IDR;
         ret = mpi->control(ctx, MPP_ENC_SET_HEADER_MODE, &header_mode);
         if (ret) {
-            spdlog::error("[ DVR MppEncoder ] MPP_ENC_SET_HEADER_MODE failed {}", ret);
+            spdlog::error("[ MppEncoder ] MPP_ENC_SET_HEADER_MODE failed {}", ret);
             cleanup();
             return false;
         }
@@ -91,7 +91,7 @@ bool MppEncoder::init(int width, int height, int hor_stride, int ver_stride,
         RK_S64 timeout = 0;
         ret = mpi->control(ctx, MPP_SET_OUTPUT_TIMEOUT, &timeout);
         if (ret) {
-            spdlog::error("[ DVR MppEncoder ] MPP_SET_OUTPUT_TIMEOUT failed {}", ret);
+            spdlog::error("[ MppEncoder ] MPP_SET_OUTPUT_TIMEOUT failed {}", ret);
             cleanup();
             return false;
         }
@@ -106,7 +106,7 @@ void MppEncoder::sync_strides(int hor_stride, int ver_stride) {
     mpp_enc_cfg_set_s32(cfg, "prep:hor_stride", hor_stride);
     mpp_enc_cfg_set_s32(cfg, "prep:ver_stride", ver_stride);
     mpi->control(ctx, MPP_ENC_SET_CFG, cfg);
-    spdlog::info("[ DVR MppEncoder ] zero-copy strides synced to {}x{}", hor_stride, ver_stride);
+    spdlog::info("[ MppEncoder ] zero-copy strides synced to {}x{}", hor_stride, ver_stride);
 }
 
 void MppEncoder::request_idr() {
@@ -131,7 +131,7 @@ int MppEncoder::submit(MppBuffer buf, int64_t pts, int width, int height,
     int ret = mpi->encode_put_frame(ctx, frame);
     mpp_frame_deinit(&frame);
     if (ret) {
-        spdlog::warn("[ DVR MppEncoder ] encode_put_frame failed {}", ret);
+        spdlog::warn("[ MppEncoder ] encode_put_frame failed {}", ret);
     }
     return ret;
 }
@@ -147,7 +147,7 @@ void MppEncoder::drain(const std::function<void(const uint8_t *, int)> &on_nal) 
             break;
         }
         if (ret) {
-            spdlog::warn("[ DVR MppEncoder ] encode_get_packet failed {}", ret);
+            spdlog::warn("[ MppEncoder ] encode_get_packet failed {}", ret);
             break;
         }
         const uint8_t *data = (const uint8_t *)mpp_packet_get_pos(packet);
@@ -181,7 +181,7 @@ void MppEncoder::flush(const std::function<bool(const uint8_t *, int)> &on_nal) 
     MppPacket packet = nullptr;
     while (true) {
         if (std::chrono::steady_clock::now() >= deadline) {
-            spdlog::warn("[ DVR MppEncoder ] flush did not complete within {}ms, giving up",
+            spdlog::warn("[ MppEncoder ] flush did not complete within {}ms, giving up",
                          FLUSH_DEADLINE_MS);
             break;
         }
@@ -193,7 +193,7 @@ void MppEncoder::flush(const std::function<bool(const uint8_t *, int)> &on_nal) 
             continue;
         }
         if (ret) {
-            spdlog::warn("[ DVR MppEncoder ] encode_get_packet failed during flush {}", ret);
+            spdlog::warn("[ MppEncoder ] encode_get_packet failed during flush {}", ret);
             break;
         }
         bool is_eos = mpp_packet_get_eos(packet);
