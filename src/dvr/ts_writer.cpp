@@ -359,6 +359,15 @@ void TsWriter::writer_loop() {
             }
             bytes_since_sync_ += job.data.size();
             sync_if_due();
+        } else if (!abandoned) {
+            // Nothing can be muxed: begin_video() was never called for this file. Silently
+            // discarding here once produced a run of 0-byte recordings whose logs reported
+            // thousands of frames written, because write_nal() only enqueues.
+            if (discard_count_ % WRITE_FAIL_WARN_INTERVAL == 0) {
+                spdlog::error("[ DVR TsWriter ] discarding access units - muxer not started "
+                              "({} so far)", discard_count_ + 1);
+            }
+            discard_count_++;
         }
 
         {

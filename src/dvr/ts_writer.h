@@ -64,6 +64,7 @@ private:
     // writer thread and closes once it does return.
     bool abandoned_ = false;
     std::atomic<uint64_t> file_size_bytes{0};
+    uint32_t discard_count_ = 0;                    // access units dropped with no muxer started
     uint32_t write_fail_count = 0;                  // writer thread only (warn throttle)
     std::atomic<uint32_t> write_fail_streak{0};     // writer thread writes, DVR reads
     uint64_t bytes_since_sync_ = 0;
