@@ -4,39 +4,52 @@
 #include "base.hpp"
 
 #include <filesystem>
-#include <map>
+#include <sys/types.h>
 #include <utility>
 #include <vector>
 
 class IconWidget : public Widget {
+  private:
+    static constexpr DrawStyle DEFAULT_STYLE{
+        {1.0, 1.0, 1.0, 1.0},
+        {0.0, 0.0, 0.0, 1.0},
+        1.0,
+    };
+
   public:
-    IconWidget(int pos_x, int pos_y, cairo_surface_t *icon, uint num_args = 0, DrawStyle style = DEFAULT_STYLE);
+    IconWidget(int pos_x, int pos_y, cairo_surface_t *icon, uint num_args = 0, DrawStyle style = DEFAULT_STYLE)
+        : Widget(pos_x, pos_y, num_args), icon_(icon), style_(style) {}
+
     ~IconWidget() override;
 
     void measure(cairo_t *cr) override;
     void draw(cairo_t *cr) override;
     void drawAt(cairo_t *cr, double x, double y) const;
 
-    void setFillColor(const CairoColor &color);
-    void setOutlineColor(const CairoColor &color);
+    void setFillColor(const CairoColor &color) {
+        style_.fill = color;
+    }
+
+    void setOutlineColor(const CairoColor &color) {
+        style_.outline = color;
+    }
+
     void setOutlineWidth(double width);
     void setStyle(const DrawStyle &style);
 
-    const DrawStyle &style() const;
+    const DrawStyle &style() const {
+        return style_;
+    }
 
   protected:
-    cairo_surface_t *icon() const;
+    cairo_surface_t *icon() const {
+        return icon_;
+    }
 
     void drawIcon(cairo_t *cr, double x, double y) const;
     int outlineWidth() const;
 
   private:
-    static constexpr DrawStyle DEFAULT_STYLE{
-        .fill = {1.0, 1.0, 1.0, 1.0},
-        .outline = {0.0, 0.0, 0.0, 1.0},
-        .outline_width = 1.0,
-    };
-
     cairo_surface_t *icon_;
     DrawStyle style_;
 };
@@ -53,12 +66,15 @@ class IconSelectorWidget : public Widget {
     void setFact(uint idx, Fact fact) override;
 
   private:
-    cairo_surface_t *selectIcon(Fact &fact);
-    cairo_surface_t *openIcon(const std::filesystem::path &icon_path);
+    struct CachedIcon {
+        std::pair<int, int> range;
+        cairo_surface_t *surface;
+    };
 
-    std::map<std::pair<int, int>, cairo_surface_t *> icon_cache_; // Cache of loaded icons
-    std::filesystem::path assets_dir_;
-    cairo_surface_t *current_icon_ = nullptr; // Currently selected icon
+    cairo_surface_t *selectIcon(const Fact &fact) const;
+
+    std::vector<CachedIcon> icons_;
+    cairo_surface_t *current_icon_ = nullptr;
 };
 
 #endif

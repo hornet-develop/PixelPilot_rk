@@ -93,7 +93,6 @@
       "x": 0,
       "y": 0,
       "icon_path": "sdcard-white.png",
-      "text": "Rec",
       "facts": [
         { "name": "dvr.recording" }
       ]

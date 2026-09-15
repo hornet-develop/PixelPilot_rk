@@ -10,9 +10,6 @@
 // TextWidget
 // -----------------------------------------------------------------------------
 
-TextWidget::TextWidget(int pos_x, int pos_y, std::string text, uint num_args, DrawStyle style)
-    : Widget(pos_x, pos_y, num_args), text_(std::move(text)), style_(style) {}
-
 void TextWidget::setText(std::string text) {
     if (text_ == text)
         return;
@@ -21,17 +18,9 @@ void TextWidget::setText(std::string text) {
     invalidateMeasure();
 }
 
-const std::string &TextWidget::text() const {
-    return text_;
-}
-
 void TextWidget::draw(cairo_t *cr) {
-    auto [x, y] = xy(cr);
+    const auto [x, y] = xy(cr);
     drawAt(cr, x, y);
-}
-
-void TextWidget::drawAt(cairo_t *cr, double x, double y) const {
-    drawText(cr, x, y);
 }
 
 void TextWidget::measure(cairo_t *cr) {
@@ -51,14 +40,6 @@ void TextWidget::measure(cairo_t *cr) {
     cairo_restore(cr);
 }
 
-void TextWidget::setFillColor(const CairoColor &color) {
-    style_.fill = color;
-}
-
-void TextWidget::setOutlineColor(const CairoColor &color) {
-    style_.outline = color;
-}
-
 void TextWidget::setOutlineWidth(double width) {
     if (style_.outline_width == width)
         return;
@@ -71,10 +52,6 @@ void TextWidget::setStyle(const DrawStyle &style) {
     if (style_.outline_width != style.outline_width)
         invalidateMeasure();
     style_ = style;
-}
-
-const DrawStyle &TextWidget::style() const {
-    return style_;
 }
 
 void TextWidget::drawText(cairo_t *cr, double x, double y) const {
@@ -122,7 +99,7 @@ std::string TplTextWidget::renderTpl() const {
 
     uint fact_i = 0;
     for (std::size_t i = 0; i < tpl_.size(); ++i) {
-        char c = tpl_[i];
+        const char c = tpl_[i];
         if (c != '%') {
             msg.push_back(c);
             continue;
@@ -132,7 +109,7 @@ std::string TplTextWidget::renderTpl() const {
             break;
         }
 
-        char spec = tpl_[++i];
+        const char spec = tpl_[++i];
         if (spec == '%') {
             msg.push_back('%');
             continue;
@@ -142,7 +119,7 @@ std::string TplTextWidget::renderTpl() const {
             continue;
         }
 
-        Fact fact = this->fact(fact_i++);
+        const Fact &fact = this->fact(fact_i++);
         if (!fact.isDefined()) {
             msg.push_back('-');
             continue;
@@ -179,9 +156,6 @@ std::string TplTextWidget::renderTpl() const {
 // IconTextWidget
 // -----------------------------------------------------------------------------
 
-IconTextWidget::IconTextWidget(int pos_x, int pos_y, cairo_surface_t *icon, std::string text, uint num_args)
-    : Widget(pos_x, pos_y, num_args), icon_(0, 0, icon), text_(0, 0, std::move(text)) {}
-
 void IconTextWidget::measure(cairo_t *cr) {
     measureChild(icon_, cr);
     measureChild(text_, cr);
@@ -189,7 +163,7 @@ void IconTextWidget::measure(cairo_t *cr) {
 }
 
 void IconTextWidget::draw(cairo_t *cr) {
-    auto [x, y] = xy(cr);
+    const auto [x, y] = xy(cr);
     icon_.drawAt(cr, x, y - 20);
     text_.drawAt(cr, x + icon_.width() + SPACING, y);
 }
@@ -198,9 +172,6 @@ void IconTextWidget::draw(cairo_t *cr) {
 // IconTplTextWidget
 // -----------------------------------------------------------------------------
 
-IconTplTextWidget::IconTplTextWidget(int pos_x, int pos_y, cairo_surface_t *icon, std::string tpl, uint num_args)
-    : TplTextWidget(pos_x, pos_y, std::move(tpl), num_args), icon_(0, 0, icon) {}
-
 void IconTplTextWidget::measure(cairo_t *cr) {
     measureChild(icon_, cr);
     TplTextWidget::measure(cr);
@@ -208,7 +179,7 @@ void IconTplTextWidget::measure(cairo_t *cr) {
 }
 
 void IconTplTextWidget::draw(cairo_t *cr) {
-    auto [x, y] = xy(cr);
+    const auto [x, y] = xy(cr);
     icon_.drawAt(cr, x, y - 20);
     drawText(cr, x + icon_.width() + SPACING, y);
 }

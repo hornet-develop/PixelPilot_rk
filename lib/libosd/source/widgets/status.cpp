@@ -1,6 +1,7 @@
 #include "status.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cstdio>
 #include <utility>
 
@@ -8,11 +9,11 @@
 // IconStatusWidget
 // -----------------------------------------------------------------------------
 
-IconStatusWidget::IconStatusWidget(int pos_x, int pos_y, cairo_surface_t *icon)
-    : IconWidget(pos_x, pos_y, icon, 1,
-                 DrawStyle{.fill = {0.4, 0.4, 0.44, 1.0}, .outline = {0.0, 0.0, 0.0, 0.4}, .outline_width = 1.0}) {}
-
 void IconStatusWidget::setFact(uint idx, Fact fact) {
+    if (idx != 0) {
+        assert(false && "IconStatusWidget fact index out of range");
+        return;
+    }
     if (fact.isDefined() && fact.getBoolValue()) {
         setFillColor({1.0, 1.0, 1.0, 1.0});
         setOutlineColor({0.0, 0.0, 0.0, 1.0});
@@ -38,12 +39,16 @@ void IconTplStatusWidget::measure(cairo_t *cr) {
 }
 
 void IconTplStatusWidget::draw(cairo_t *cr) {
-    auto [x, y] = xy(cr);
+    const auto [x, y] = xy(cr);
     icon_.drawAt(cr, x, y - 20);
     text_.drawAt(cr, x + icon_.width() + SPACING, y);
 }
 
 void IconTplStatusWidget::setFact(uint idx, Fact fact) {
+    if (idx >= factCount()) {
+        assert(false && "IconTplStatusWidget fact index out of range");
+        return;
+    }
     if (idx == 0) {
         if (fact.isDefined() && fact.getBoolValue()) {
             setActiveStyle();
@@ -80,39 +85,29 @@ void IconTplStatusWidget::setInactiveStyle() {
 // DvrStatusWidget
 // -----------------------------------------------------------------------------
 
-DvrStatusWidget::DvrStatusWidget(int pos_x, int pos_y, cairo_surface_t *icon, std::string text)
-    : Widget(pos_x, pos_y, 1), icon_(0, 0, icon, 0, ICON_STYLE), text_(0, 0, std::move(text), 0, TEXT_STYLE) {}
-
 void DvrStatusWidget::measure(cairo_t *cr) {
     if (!isActive()) {
         setSize(0, 0);
         return;
     }
-    measureChild(icon_, cr);
-    measureChild(text_, cr);
-    setSize(icon_.width() + SPACING + text_.width(), std::max(icon_.height(), text_.height()));
+    IconWidget::measure(cr);
 }
 
 void DvrStatusWidget::draw(cairo_t *cr) {
     if (!isActive()) {
         return;
     }
-    auto [x, y] = xy(cr);
-    icon_.drawAt(cr, x, y - 20);
-    text_.drawAt(cr, x + icon_.width() + SPACING, y);
+    IconWidget::draw(cr);
 }
 
 bool DvrStatusWidget::isActive() const {
-    Fact status = fact(0);
+    const Fact &status = fact(0);
     return status.isDefined() && status.getBoolValue();
 }
 
 // -----------------------------------------------------------------------------
 // DvrStorageWidget
 // -----------------------------------------------------------------------------
-
-DvrStorageWidget::DvrStorageWidget(int pos_x, int pos_y, cairo_surface_t *icon)
-    : Widget(pos_x, pos_y, 2), icon_(0, 0, icon), text_(0, 0, "-") {}
 
 void DvrStorageWidget::measure(cairo_t *cr) {
     if (!visible_) {
@@ -132,7 +127,7 @@ void DvrStorageWidget::draw(cairo_t *cr) {
     if (!visible_) {
         return;
     }
-    auto [x, y] = xy(cr);
+    const auto [x, y] = xy(cr);
     icon_.drawAt(cr, x, y - 20);
     if (show_text_) {
         text_.drawAt(cr, x + icon_.width() + SPACING, y);
@@ -140,12 +135,16 @@ void DvrStorageWidget::draw(cairo_t *cr) {
 }
 
 void DvrStorageWidget::setFact(uint idx, Fact fact) {
+    if (idx >= factCount()) {
+        assert(false && "DvrStorageWidget fact index out of range");
+        return;
+    }
     storeFact(idx, std::move(fact));
     updateState();
 }
 
 void DvrStorageWidget::updateState() {
-    Fact status_fact = fact(0);
+    const Fact &status_fact = fact(0);
     if (!status_fact.isDefined()) {
         visible_ = false;
         return;
@@ -180,15 +179,15 @@ void DvrStorageWidget::updateState() {
 }
 
 void DvrStorageWidget::updateStorageText() {
-    Fact storage_fact = fact(1);
+    const Fact &storage_fact = fact(1);
     if (!storage_fact.isDefined()) {
         text_.setText("-");
         return;
     }
-    text_.setText(format_storage_size(storage_fact.getUintValue()));
+    text_.setText(formatStorageSize(storage_fact.getUintValue()));
 }
 
-std::string DvrStorageWidget::format_storage_size(uint64_t bytes) {
+std::string DvrStorageWidget::formatStorageSize(uint64_t bytes) {
     struct StorageUnit {
         uint64_t size;
         const char *name;
@@ -211,7 +210,7 @@ std::string DvrStorageWidget::format_storage_size(uint64_t bytes) {
     const double value = static_cast<double>(bytes) / unit->size;
 
     char buf[32];
-    snprintf(buf, sizeof(buf), "%.1f %s", value, unit->name);
+    std::snprintf(buf, sizeof(buf), "%.1f %s", value, unit->name);
 
     return buf;
 }

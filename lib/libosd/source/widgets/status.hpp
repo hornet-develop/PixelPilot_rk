@@ -10,7 +10,13 @@
 
 class IconStatusWidget : public IconWidget {
   public:
-    IconStatusWidget(int pos_x, int pos_y, cairo_surface_t *icon);
+    IconStatusWidget(int pos_x, int pos_y, cairo_surface_t *icon)
+        : IconWidget(pos_x, pos_y, icon, 1,
+                     DrawStyle{
+                         {0.4, 0.4, 0.44, 1.0},
+                         {0.0, 0.0, 0.0, 0.4},
+                         1.0,
+                     }) {}
 
     void setFact(uint idx, Fact fact) override;
 };
@@ -33,37 +39,28 @@ class IconTplStatusWidget : public Widget {
     TplTextWidget text_;
 };
 
-class DvrStatusWidget : public Widget {
+class DvrStatusWidget : public IconWidget {
+  private:
+    static constexpr DrawStyle ICON_STYLE{
+        {1.0, 0.0, 0.0, 1.0},
+        {0.0, 0.0, 0.0, 1.0},
+        1.0,
+    };
+
   public:
-    DvrStatusWidget(int pos_x, int pos_y, cairo_surface_t *icon, std::string text);
+    DvrStatusWidget(int pos_x, int pos_y, cairo_surface_t *icon) : IconWidget(pos_x, pos_y, icon, 1, ICON_STYLE) {}
 
     void measure(cairo_t *cr) override;
     void draw(cairo_t *cr) override;
 
   private:
     bool isActive() const;
-
-    static constexpr int SPACING = 14;
-
-    static constexpr DrawStyle ICON_STYLE{
-        .fill = {1.0, 0.0, 0.0, 1.0},
-        .outline = {0.0, 0.0, 0.0, 1.0},
-        .outline_width = 1.0,
-    };
-
-    static constexpr DrawStyle TEXT_STYLE{
-        .fill = {1.0, 0.0, 0.0, 1.0},
-        .outline = {0.0, 0.0, 0.0, 1.0},
-        .outline_width = 2.0,
-    };
-
-    IconWidget icon_;
-    TextWidget text_;
 };
 
 class DvrStorageWidget : public Widget {
   public:
-    DvrStorageWidget(int pos_x, int pos_y, cairo_surface_t *icon);
+    DvrStorageWidget(int pos_x, int pos_y, cairo_surface_t *icon)
+        : Widget(pos_x, pos_y, 2), icon_(0, 0, icon), text_(0, 0, "-") {}
 
     void measure(cairo_t *cr) override;
     void draw(cairo_t *cr) override;
@@ -73,7 +70,7 @@ class DvrStorageWidget : public Widget {
     void updateState();
     void updateStorageText();
 
-    static std::string format_storage_size(uint64_t bytes);
+    static std::string formatStorageSize(uint64_t bytes);
 
     static constexpr int SPACING = 5;
     bool visible_ = false;

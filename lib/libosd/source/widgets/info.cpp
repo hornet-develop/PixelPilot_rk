@@ -2,13 +2,11 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
 #include <sstream>
-#include <utility>
-
-#include <spdlog/spdlog.h>
 
 // -----------------------------------------------------------------------------
 // TimeWidget
@@ -16,7 +14,7 @@
 
 TimeWidget::TimeWidget(int pos_x, int pos_y, uint num_args)
     : TextWidget(pos_x, pos_y, "---- -- -- --:--:--", num_args,
-                 DrawStyle{.fill = {0.8, 0.8, 0.8, 1.0}, .outline = {0.0, 0.0, 0.0, 1.0}, .outline_width = 1.0}) {}
+                 DrawStyle{{0.8, 0.8, 0.8, 1.0}, {0.0, 0.0, 0.0, 1.0}, 1.0}) {}
 
 void TimeWidget::draw(cairo_t *cr) {
     updateTime();
@@ -76,16 +74,16 @@ void GPSWidget::draw(cairo_t *cr) {
 }
 
 bool GPSWidget::isReady() const {
-    Fact fix = fact(0);
-    Fact lat = fact(1);
-    Fact lon = fact(2);
+    const Fact &fix = fact(0);
+    const Fact &lat = fact(1);
+    const Fact &lon = fact(2);
     return fix.isDefined() && lat.isDefined() && lon.isDefined();
 }
 
 std::string GPSWidget::formatText() const {
-    Fact fix_fact = fact(0);
-    Fact lat_fact = fact(1);
-    Fact lon_fact = fact(2);
+    const Fact &fix_fact = fact(0);
+    const Fact &lat_fact = fact(1);
+    const Fact &lon_fact = fact(2);
     std::string fix_type = "undef";
     char buf[64];
     switch (fix_fact.getUintValue()) {
@@ -119,16 +117,13 @@ std::string GPSWidget::formatText() const {
     }
     const double lat = lat_fact.getIntValue() * 1.0e-7;
     const double lon = lon_fact.getIntValue() * 1.0e-7;
-    std::snprintf(buf, sizeof(buf), "%s Lat:%f, Lon:%f", fix_type.c_str(), lat, lon);
+    std::snprintf(buf, sizeof(buf), "%s Lat:%.7f, Lon:%.7f", fix_type.c_str(), lat, lon);
     return buf;
 }
 
 // -----------------------------------------------------------------------------
 // DebugWidget
 // -----------------------------------------------------------------------------
-
-DebugWidget::DebugWidget(int pos_x, int pos_y, uint num_args)
-    : Widget(pos_x, pos_y, num_args), lines_(num_args, "undef") {}
 
 void DebugWidget::measure(cairo_t *cr) {
     double max_width = 0.0;
@@ -141,23 +136,26 @@ void DebugWidget::measure(cairo_t *cr) {
 }
 
 void DebugWidget::draw(cairo_t *cr) {
-    auto [x, y] = xy(cr);
+    const auto [x, y] = xy(cr);
     auto y_offset = y;
     for (const auto &line : lines_) {
-        cairo_set_source_rgba(cr, 255.0, 50.0, 50.0, 1.0);
+        cairo_set_source_rgba(cr, 1.0, 50.0 / 255.0, 50.0 / 255.0, 1.0);
         cairo_move_to(cr, x, y_offset);
         cairo_show_text(cr, line.c_str());
         y_offset += LINE_HEIGHT;
-        SPDLOG_INFO("dbg draw {}", line);
     }
 }
 
 void DebugWidget::setFact(uint idx, Fact fact) {
-    lines_.at(idx) = formatFact(std::move(fact));
+    if (idx >= lines_.size()) {
+        assert(false && "DebugWidget fact index out of range");
+        return;
+    }
+    lines_[idx] = formatFact(fact);
     invalidateMeasure();
 }
 
-std::string DebugWidget::formatFact(Fact fact) {
+std::string DebugWidget::formatFact(const Fact &fact) {
     std::ostringstream oss;
 
     if (!fact.isDefined()) {
@@ -176,11 +174,12 @@ std::string DebugWidget::formatFact(Fact fact) {
 // PopupWidget
 // -----------------------------------------------------------------------------
 
-PopupWidget::PopupWidget(int pos_x, int pos_y, uint timeout_ms, uint num_args)
-    : Widget(pos_x, pos_y, num_args), timeout_(timeout_ms) {}
+PopupWidget::PopupWidget(int pos_x, int pos_y, uint timeout_ms, uint) : Widget(pos_x, pos_y), timeout_(timeout_ms) {
+    assert(timeout_ms > 0);
+}
 
 void PopupWidget::measure(cairo_t *cr) {
-    auto now = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
     removeExpired(now);
 
     double max_width = 0.0;
@@ -195,21 +194,24 @@ void PopupWidget::measure(cairo_t *cr) {
             msg.measured = true;
         }
         max_width = std::max(max_width, msg.width + PADDING * 2);
-        total_height += msg.height + PADDING * 2 + ITEM_SPACING;
+        total_height += msg.height + PADDING * 2;
+    }
+    if (!msgs_.empty()) {
+        total_height += ITEM_SPACING * (msgs_.size() - 1);
     }
     setSize(static_cast<int>(std::ceil(max_width)), static_cast<int>(std::ceil(total_height)));
 }
 
 void PopupWidget::draw(cairo_t *cr) {
-    auto [x, y] = xy(cr);
-    auto now = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
     if (removeExpired(now)) {
         invalidateMeasure();
     }
+    const auto [x, y] = xy(cr);
     double y_offset = y;
     for (const auto &msg : msgs_) {
-        auto past = std::chrono::duration_cast<std::chrono::milliseconds>(now - msg.time);
-        double fade_fraction = 1.0 - static_cast<double>(past.count()) / static_cast<double>(timeout_.count());
+        const auto past = std::chrono::duration_cast<std::chrono::milliseconds>(now - msg.time);
+        const double fade_fraction = 1.0 - static_cast<double>(past.count()) / static_cast<double>(timeout_.count());
 
         // Draw popup box
         cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, fade_fraction / 3.0);
@@ -217,7 +219,7 @@ void PopupWidget::draw(cairo_t *cr) {
         cairo_fill(cr);
 
         // Draw popup text
-        cairo_set_source_rgba(cr, 255.0, 255.0, 255.0, fade_fraction);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, fade_fraction);
         cairo_move_to(cr, x, y_offset);
         cairo_show_text(cr, msg.text.c_str());
         y_offset += msg.height + (PADDING * 2) + ITEM_SPACING;
@@ -225,11 +227,11 @@ void PopupWidget::draw(cairo_t *cr) {
 }
 
 void PopupWidget::setFact(uint, Fact fact) {
-    msgs_.push_back({.time = std::chrono::steady_clock::now(), .text = fact.getStrValue()});
+    msgs_.push_back({std::chrono::steady_clock::now(), fact.getStrValue()});
     invalidateMeasure();
 }
 
-bool PopupWidget::removeExpired(std::chrono::time_point<std::chrono::steady_clock> now) {
+bool PopupWidget::removeExpired(Clock::time_point now) {
     bool removed = false;
     while (!msgs_.empty() && now - msgs_.front().time > timeout_) {
         msgs_.pop_front();
