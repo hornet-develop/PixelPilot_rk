@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <string>
+#include <sys/types.h>
 
 class VideoWidget : public Widget {
   public:
@@ -25,7 +26,7 @@ class VideoWidget : public Widget {
     TplTextWidget text_;
 
     RunningAverage fps_;
-    std::chrono::milliseconds refresh_rate_ms_{};
+    const std::chrono::milliseconds refresh_rate_ms_;
     std::chrono::steady_clock::time_point last_drawn_{};
 };
 
@@ -45,7 +46,7 @@ class VideoBitrateWidget : public Widget {
     TplTextWidget text_;
 
     RunningAverage bps_;
-    std::chrono::milliseconds refresh_rate_ms_{};
+    const std::chrono::milliseconds refresh_rate_ms_;
     std::chrono::steady_clock::time_point last_drawn_{};
 };
 
@@ -65,7 +66,7 @@ class VideoDecodeLatencyWidget : public Widget {
     TplTextWidget text_;
 
     RunningAverage timing_;
-    std::chrono::milliseconds refresh_rate_ms_{};
+    const std::chrono::milliseconds refresh_rate_ms_;
     std::chrono::steady_clock::time_point last_drawn_{};
 };
 

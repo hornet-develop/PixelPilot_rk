@@ -8,7 +8,8 @@ class Widget;
 
 class Layout {
   public:
-    Layout(int pos_x, int pos_y, int spacing);
+    Layout(int pos_x, int pos_y, int spacing) : pos_x_(pos_x), pos_y_(pos_y), spacing_(spacing) {}
+
     virtual ~Layout() = default;
 
     Layout(const Layout &) = delete;
@@ -16,8 +17,14 @@ class Layout {
 
     void addWidget(Widget *widget);
 
-    void invalidate();
-    bool dirty() const;
+    void invalidate() {
+        dirty_ = true;
+    }
+
+    bool dirty() const {
+        return dirty_;
+    }
+
     void update(cairo_t *cr);
 
   protected:
@@ -26,13 +33,18 @@ class Layout {
     int x(cairo_t *cr) const;
     int y(cairo_t *cr) const;
 
-    const std::vector<Widget *> &widgets() const;
-    int spacing() const;
+    const std::vector<Widget *> &widgets() const {
+        return widgets_;
+    }
+
+    int spacing() const {
+        return spacing_;
+    }
 
   private:
-    int pos_x_;
-    int pos_y_;
-    int spacing_;
+    const int pos_x_;
+    const int pos_y_;
+    const int spacing_;
 
     bool dirty_ = true;
     std::vector<Widget *> widgets_;
@@ -45,13 +57,14 @@ class HorizontalLayout : public Layout {
         RightToLeft,
     };
 
-    HorizontalLayout(int pos_x, int pos_y, int spacing, Direction direction);
+    HorizontalLayout(int pos_x, int pos_y, int spacing, Direction direction)
+        : Layout(pos_x, pos_y, spacing), direction_(direction) {}
 
   protected:
     void doUpdate(cairo_t *cr) override;
 
   private:
-    Direction direction_;
+    const Direction direction_;
 };
 
 #endif

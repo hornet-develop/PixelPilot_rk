@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <shared_surface.hpp>
@@ -37,15 +38,12 @@ class BarChartWidget : public Widget {
     void setFact(uint idx, Fact fact) override;
 
   private:
-    std::string shorten(long num);
-    std::vector<double> select_stats(std::vector<Stats> stats);
+    std::vector<double> selectStats(const std::vector<Stats> &stats) const;
 
     uint width_;
     uint height_;
-    uint window_ms_;
-    uint num_buckets_;
 
-    StatsField stats_field_ = STATS_SUM;
+    StatsField stats_field_;
     RunningAverage stats_;
 
     TextWidget max_label_;
@@ -54,22 +52,25 @@ class BarChartWidget : public Widget {
 
 class ExternalSurfaceWidget : public Widget {
   public:
-    ExternalSurfaceWidget(int pos_x, int pos_y, std::string shm_name, uint refresh_frequency_ms);
+    ExternalSurfaceWidget(int pos_x, int pos_y, std::string shm_name, uint refresh_frequency_ms)
+        : Widget(pos_x, pos_y), shm_name_(std::move(shm_name)), refresh_frequency_ms_(refresh_frequency_ms) {}
+
     ~ExternalSurfaceWidget() override;
 
     void measure(cairo_t *cr) override;
     void draw(cairo_t *cr) override;
 
   private:
-    void init_shm(cairo_t *cr);
+    bool initShm(cairo_t *cr);
+    void cleanupShm();
 
-    SharedMemoryRegion *shm_region = nullptr;
-    int32_t last_surface_index = -1;
-    cairo_surface_t *shm_surfaces[SHM_BUFFERS_COUNT] = {};
-    size_t shm_size = 0;
-    unsigned char *shm_data = nullptr;
-    std::string shm_name;
-    uint refresh_frequency_ms_;
+    SharedMemoryRegion *shm_region_ = nullptr;
+    int32_t last_surface_index_ = -1;
+    cairo_surface_t *shm_surfaces_[SHM_BUFFERS_COUNT] = {};
+    size_t shm_size_ = 0;
+
+    std::string shm_name_;
+    const uint refresh_frequency_ms_;
 };
 
 #endif

@@ -5,19 +5,9 @@
 // Layout
 // -----------------------------------------------------------------------------
 
-Layout::Layout(int pos_x, int pos_y, int spacing) : pos_x_(pos_x), pos_y_(pos_y), spacing_(spacing) {}
-
 void Layout::addWidget(Widget *widget) {
     widgets_.push_back(widget);
     dirty_ = true;
-}
-
-void Layout::invalidate() {
-    dirty_ = true;
-}
-
-bool Layout::dirty() const {
-    return dirty_;
 }
 
 void Layout::update(cairo_t *cr) {
@@ -40,20 +30,9 @@ int Layout::y(cairo_t *cr) const {
     return (height + pos_y_) % height;
 }
 
-const std::vector<Widget *> &Layout::widgets() const {
-    return widgets_;
-}
-
-int Layout::spacing() const {
-    return spacing_;
-}
-
 // -----------------------------------------------------------------------------
 // HorizontalLayout
 // -----------------------------------------------------------------------------
-
-HorizontalLayout::HorizontalLayout(int pos_x, int pos_y, int spacing, Direction direction)
-    : Layout(pos_x, pos_y, spacing), direction_(direction) {}
 
 void HorizontalLayout::doUpdate(cairo_t *cr) {
     int cursor_x = x(cr);

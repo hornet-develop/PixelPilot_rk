@@ -6,12 +6,23 @@
 
 #include <spdlog/spdlog.h>
 
+namespace {
+
+cairo_surface_t *openIcon(const std::filesystem::path &path) {
+    cairo_surface_t *icon = cairo_image_surface_create_from_png(path.c_str());
+    if (cairo_surface_status(icon) != CAIRO_STATUS_SUCCESS) {
+        spdlog::error("Failed to open icon: {}", path.string());
+        cairo_surface_destroy(icon);
+        return nullptr;
+    }
+    return icon;
+}
+
+} // namespace
+
 // -----------------------------------------------------------------------------
 // IconWidget
 // -----------------------------------------------------------------------------
-
-IconWidget::IconWidget(int pos_x, int pos_y, cairo_surface_t *icon, uint num_args, DrawStyle style)
-    : Widget(pos_x, pos_y, num_args), icon_(icon), style_(style) {}
 
 IconWidget::~IconWidget() {
     if (icon_)
@@ -39,14 +50,6 @@ void IconWidget::drawAt(cairo_t *cr, double x, double y) const {
     drawIcon(cr, x, y);
 }
 
-void IconWidget::setFillColor(const CairoColor &color) {
-    style_.fill = color;
-}
-
-void IconWidget::setOutlineColor(const CairoColor &color) {
-    style_.outline = color;
-}
-
 void IconWidget::setOutlineWidth(double width) {
     if (style_.outline_width == width)
         return;
@@ -59,13 +62,6 @@ void IconWidget::setStyle(const DrawStyle &style) {
     if (style_.outline_width != style.outline_width)
         invalidateMeasure();
     style_ = style;
-}
-
-const DrawStyle &IconWidget::style() const {
-    return style_;
-}
-cairo_surface_t *IconWidget::icon() const {
-    return icon_;
 }
 
 void IconWidget::drawIcon(cairo_t *cr, double x, double y) const {
@@ -101,21 +97,19 @@ int IconWidget::outlineWidth() const {
 IconSelectorWidget::IconSelectorWidget(
     int pos_x, int pos_y, const std::vector<std::pair<std::pair<int, int>, std::filesystem::path>> &ranges_and_icons,
     const std::filesystem::path &assets_dir)
-    : Widget(pos_x, pos_y, 1), assets_dir_(assets_dir) {
+    : Widget(pos_x, pos_y, 1) {
     // Load and cache all icons during initialization
     for (const auto &[range, icon_path] : ranges_and_icons) {
-        cairo_surface_t *icon = openIcon(icon_path);
+        cairo_surface_t *icon = openIcon(assets_dir / icon_path);
         if (icon) {
-            icon_cache_[range] = icon;
+            icons_.push_back({range, icon});
         }
     }
 }
 
 IconSelectorWidget::~IconSelectorWidget() {
-    for (auto &[range, icon] : icon_cache_) {
-        if (icon) {
-            cairo_surface_destroy(icon);
-        }
+    for (const auto &icon : icons_) {
+        cairo_surface_destroy(icon.surface);
     }
 }
 
@@ -149,7 +143,11 @@ void IconSelectorWidget::draw(cairo_t *cr) {
 }
 
 void IconSelectorWidget::setFact(uint idx, Fact fact) {
-    assert(idx == 0);
+    if (idx != 0) {
+        spdlog::error("IconSelectorWidget: invalid fact index {}", idx);
+        assert(false && "IconSelectorWidget fact index out of range");
+        return;
+    }
     cairo_surface_t *icon = selectIcon(fact);
     if (icon == current_icon_) {
         return;
@@ -158,12 +156,12 @@ void IconSelectorWidget::setFact(uint idx, Fact fact) {
     invalidateMeasure();
 }
 
-cairo_surface_t *IconSelectorWidget::selectIcon(Fact &fact) {
-    if (!fact.isDefined())
+cairo_surface_t *IconSelectorWidget::selectIcon(const Fact &fact) const {
+    if (!fact.isDefined()) {
         return nullptr;
+    }
 
     long value = 0;
-
     // Convert all fact types to comparable integer values
     switch (fact.getType()) {
         case Fact::T_BOOL:
@@ -178,36 +176,30 @@ cairo_surface_t *IconSelectorWidget::selectIcon(Fact &fact) {
         case Fact::T_DOUBLE:
             value = static_cast<long>(fact.getDoubleValue());
             break;
-        case Fact::T_STRING:
+        case Fact::T_STRING: {
             try {
-                value = std::stol(fact.getStrValue());
+                size_t pos = 0;
+                const std::string &str = fact.getStrValue();
+                value = std::stol(str, &pos);
+                if (pos != str.size()) {
+                    return nullptr;
+                }
             } catch (...) {
-                // If string can't be converted to number, use 0
-                value = 0;
+                return nullptr;
             }
             break;
+        }
         case Fact::T_UNDEF:
         default:
             return nullptr;
     }
 
     // Iterate through the configured ranges and select the appropriate icon
-    for (const auto &[range, icon] : icon_cache_) {
-        if (value >= range.first && value <= range.second) {
-            return icon;
+    for (const auto &icon : icons_) {
+        if (value >= icon.range.first && value <= icon.range.second) {
+            return icon.surface;
         }
     }
 
     return nullptr; // No icon selected
-}
-
-cairo_surface_t *IconSelectorWidget::openIcon(const std::filesystem::path &icon_path) {
-    std::filesystem::path full_path = assets_dir_ / icon_path;
-    cairo_surface_t *icon = cairo_image_surface_create_from_png(full_path.c_str());
-    if (cairo_surface_status(icon) != CAIRO_STATUS_SUCCESS) {
-        spdlog::error("Failed to open icon: {}", full_path.string());
-        cairo_surface_destroy(icon);
-        return nullptr;
-    }
-    return icon;
 }

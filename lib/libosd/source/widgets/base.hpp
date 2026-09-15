@@ -1,11 +1,13 @@
 #ifndef OSD_WIDGETS_BASE_HPP
 #define OSD_WIDGETS_BASE_HPP
 
-#include <cairo.h>
 #include <fact.hpp>
 
+#include <sys/types.h>
 #include <utility>
 #include <vector>
+
+#include <cairo.h>
 
 struct Size {
     int width = 0;
@@ -32,7 +34,7 @@ struct DrawStyle {
 
 class Widget {
   public:
-    Widget(int pos_x, int pos_y, uint num_args = 0);
+    Widget(int pos_x, int pos_y, uint num_args = 0) : position_{pos_x, pos_y}, args_(num_args) {}
     virtual ~Widget() = default;
 
     Widget(const Widget &) = delete;
@@ -42,28 +44,45 @@ class Widget {
     virtual void measure(cairo_t *cr) = 0;
     virtual void setFact(uint idx, Fact fact);
 
-    void setPosition(int x, int y);
+    void setPosition(int x, int y) {
+        position_ = {x, y};
+    }
 
-    bool measureDirty() const;
+    bool measureDirty() const {
+        return measure_dirty_;
+    }
 
-    int width() const;
-    int height() const;
+    int width() const {
+        return size_.width;
+    }
 
-    const Size &size() const;
-    const Position &position() const;
+    int height() const {
+        return size_.height;
+    }
+
+  protected:
+    static void measureChild(Widget &child, cairo_t *cr);
+    void storeFact(uint idx, Fact fact);
 
     int x(cairo_t *cr) const;
     int y(cairo_t *cr) const;
-    std::pair<int, int> xy(cairo_t *cr) const;
 
-  protected:
-    void measureChild(Widget &child, cairo_t *cr);
+    std::pair<int, int> xy(cairo_t *cr) const {
+        return {x(cr), y(cr)};
+    }
 
-    void storeFact(uint idx, Fact fact);
-    const Fact &fact(uint idx) const;
-    uint factCount() const;
+    const Fact &fact(uint idx) const {
+        return args_.at(idx);
+    }
 
-    void invalidateMeasure();
+    uint factCount() const {
+        return static_cast<uint>(args_.size());
+    }
+
+    void invalidateMeasure() {
+        measure_dirty_ = true;
+    }
+
     void setSize(int width, int height);
 
   private:

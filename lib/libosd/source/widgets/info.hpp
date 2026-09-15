@@ -7,6 +7,7 @@
 #include <chrono>
 #include <deque>
 #include <string>
+#include <sys/types.h>
 #include <vector>
 
 class TimeWidget : public TextWidget {
@@ -40,26 +41,20 @@ class GPSWidget : public TextWidget {
 
 class DebugWidget : public Widget {
   public:
-    DebugWidget(int pos_x, int pos_y, uint num_args);
+    DebugWidget(int pos_x, int pos_y, uint num_args) : Widget(pos_x, pos_y, num_args), lines_(num_args, "undef") {}
 
     void measure(cairo_t *cr) override;
     void draw(cairo_t *cr) override;
     void setFact(uint idx, Fact fact) override;
 
   private:
-    static std::string formatFact(Fact fact);
+    static std::string formatFact(const Fact &fact);
 
     static constexpr int LINE_HEIGHT = 20;
 
     std::vector<std::string> lines_;
 };
 
-/**
- * Displays text facts for a period of time, stacking them one after another; fading-out opacity.
- * Convenient for warnings, custom messages and pop-ups.
- *
- * @param timeout_ms stop displaying the fact after this many milliseconds since it was received
- */
 class PopupWidget : public Widget {
   public:
     PopupWidget(int pos_x, int pos_y, uint timeout_ms, uint num_args);
@@ -69,21 +64,23 @@ class PopupWidget : public Widget {
     void setFact(uint, Fact fact) override;
 
   private:
+    using Clock = std::chrono::steady_clock;
+
     struct Message {
-        std::chrono::time_point<std::chrono::steady_clock> time;
+        Clock::time_point time;
         std::string text;
         double width = 0.0;
         double height = 0.0;
         bool measured = false;
     };
 
-    bool removeExpired(std::chrono::time_point<std::chrono::steady_clock> now);
+    bool removeExpired(Clock::time_point now);
 
     static constexpr double PADDING = 5.0;
     static constexpr double ITEM_SPACING = 2.0;
 
     std::deque<Message> msgs_;
-    std::chrono::milliseconds timeout_;
+    const std::chrono::milliseconds timeout_;
 };
 
 #endif
