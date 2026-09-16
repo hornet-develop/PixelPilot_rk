@@ -5,9 +5,10 @@ pkg_check_modules(SPDLOG REQUIRED IMPORTED_TARGET spdlog)
 pkg_check_modules(NLOHMANN REQUIRED IMPORTED_TARGET nlohmann_json)
 
 add_library(osd STATIC
-    source/osd.cpp
+    source/config_loader.cpp
     source/fact.cpp
     source/layout.cpp
+    source/osd.cpp
     source/widgets/base.cpp
     source/widgets/graphics.cpp
     source/widgets/icon.cpp

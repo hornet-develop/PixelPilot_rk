@@ -3,53 +3,58 @@
 
 #include "fact.hpp"
 
+#include <cairo.h>
+
 #include <filesystem>
 #include <memory>
 #include <string>
 #include <sys/types.h>
-#include <tuple>
 #include <unordered_map>
 #include <vector>
 
-#include <cairo.h>
-#include <nlohmann/json_fwd.hpp>
-
 class Layout;
+class OsdConfigLoader;
 class Widget;
 
 class Osd {
   public:
-    explicit Osd(uint refresh_frequency_ms);
+    using WidgetEnableMap = std::unordered_map<std::string, bool>;
+
+    Osd(uint refresh_frequency_ms, WidgetEnableMap widget_enable);
     ~Osd();
 
     bool loadConfig(const std::filesystem::path &path);
-    void loadScreensaverImage(const std::string &path);
-
+    void setFact(Fact fact);
     void draw(cairo_t *cr);
+
+    void loadScreensaverImage(const std::filesystem::path &path);
     void drawScreensaver(cairo_t *cr);
 
-    void setFact(Fact fact);
-
   private:
-    bool loadConfigJson(const nlohmann::json &cfg);
+    friend class OsdConfigLoader;
 
-    bool loadWidgets(const nlohmann::json &widgets_json, const std::filesystem::path &assets_dir);
-    std::unique_ptr<Widget> createWidget(const nlohmann::json &cfg, const std::filesystem::path &assets_dir,
-                                         const std::string &name, const std::string &type, int x, int y, uint num_args);
+    struct WidgetEntry {
+        std::string id;
+        std::unique_ptr<Widget> widget;
+        std::vector<FactMatcher> matchers;
+        std::vector<Layout *> layouts;
+    };
 
-    bool loadLayouts(const nlohmann::json &layouts_json);
+    bool addWidget(std::string id, std::unique_ptr<Widget> widget, std::vector<FactMatcher> matchers);
+    bool addLayout(std::unique_ptr<Layout> layout, const std::vector<std::string> &widget_ids);
 
-    void addWidget(std::unique_ptr<Widget> widget, std::vector<FactMatcher> param_matchers, const std::string &id);
-    void addWidgetToLayout(Layout *layout, Widget *widget);
+    WidgetEntry *findWidget(const std::string &id);
+    bool isWidgetEnabled(const std::string &id) const;
 
     void measureWidgets(cairo_t *cr);
 
-    std::vector<std::unique_ptr<Widget>> widgets_;
-    std::vector<std::unique_ptr<Layout>> layouts_;
+    uint refreshFrequencyMs() const {
+        return refresh_frequency_ms_;
+    }
 
-    std::unordered_map<Widget *, std::vector<Layout *>> widget_layouts_;
-    std::unordered_map<std::string, Widget *> widgets_by_id_;
-    std::vector<std::tuple<FactMatcher, Widget *, uint>> matchers_;
+    std::vector<WidgetEntry> widget_entries_;
+    std::vector<std::unique_ptr<Layout>> layouts_;
+    const WidgetEnableMap widget_enabled_;
 
     cairo_surface_t *screensaver_image_ = nullptr;
     const uint refresh_frequency_ms_;

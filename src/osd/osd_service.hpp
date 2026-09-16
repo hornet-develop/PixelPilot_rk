@@ -28,6 +28,17 @@ struct OsdServiceParams {
     int zpos = 2;
 
     bool enabled = false;
+    std::unordered_map<std::string, bool> widget_enabled{
+        {"video_fps_resolution", true},
+        {"video_link_bitrate", true},
+        {"signal_snr", true},
+        {"signal_rssi", true},
+        {"dvr_storage", false},
+        {"wfb_status", true},
+        {"drone_status", true},
+        {"dvr_status", false},
+        {"msposd", true}
+    };
 };
 
 class OsdService {

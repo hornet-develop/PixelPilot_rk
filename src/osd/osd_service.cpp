@@ -34,7 +34,7 @@ extern bool osd_update_ready;
 std::unique_ptr<OsdService> OsdService::instance_;
 
 OsdService::OsdService(OsdServiceParams params)
-    : params_(std::move(params)), osd_(params_.refresh_frequency_ms) {}
+    : params_(std::move(params)), osd_(params_.refresh_frequency_ms, params_.widget_enabled) {}
 
 bool OsdService::start(OsdServiceParams params) {
     if (instance_) {
