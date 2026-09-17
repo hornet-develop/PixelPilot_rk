@@ -5,8 +5,6 @@ project(pixelpilot VERSION 1.5.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-add_compile_options("-Wno-address-of-packed-member")
-
 set(SOURCE_FILES 
         src/common.h
         src/drm.h
@@ -27,8 +25,6 @@ set(SOURCE_FILES
         src/dvr/storage_guard.cpp
         src/dvr/dvr.h
         src/dvr/dvr.cpp
-        src/mavlink.h
-        src/mavlink.c
         src/main.cpp
         src/wfbcli.hpp
         src/wfbcli.cpp

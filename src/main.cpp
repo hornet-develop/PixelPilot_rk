@@ -38,9 +38,6 @@
 
 extern "C" {
 #include "drm.h"
-
-#include "mavlink/common/mavlink.h"
-#include "mavlink.h"
 }
 
 #include "osd.h"
@@ -89,8 +86,6 @@ enum AppOption {
     OPT_DVR_MIN_FREE_MB,
     OPT_DVR_REQUIRE_MOUNT,
     OPT_LOG_LEVEL,
-    OPT_MAVLINK_PORT,
-    OPT_MAVLINK_DVR_ON_ARM,
     OPT_OSD,
     OPT_OSD_CONFIG,
     OPT_OSD_REFRESH,
@@ -118,8 +113,6 @@ static const struct option pixelpilot_long_options[] = {
     {"dvr-min-free-mb",     required_argument, 0, OPT_DVR_MIN_FREE_MB},
     {"dvr-require-mount",   no_argument,       0, OPT_DVR_REQUIRE_MOUNT},
     {"log-level",           required_argument, 0, OPT_LOG_LEVEL},
-    {"mavlink-port",        required_argument, 0, OPT_MAVLINK_PORT},
-    {"mavlink-dvr-on-arm",  no_argument,       0, OPT_MAVLINK_DVR_ON_ARM},
     {"osd",                 no_argument,       0, OPT_OSD},
     {"osd-config",          required_argument, 0, OPT_OSD_CONFIG},
     {"osd-refresh",         required_argument, 0, OPT_OSD_REFRESH},
@@ -149,7 +142,6 @@ std::atomic<bool> video_present = false;
 int video_zpos = 1;
 
 bool update_osd_video_size = false;
-bool mavlink_dvr_on_arm = false;
 bool osd_custom_message = false;
 bool disable_vsync = false;
 uint32_t refresh_frequency_ms = 1000;
@@ -571,7 +563,6 @@ void sig_handler(int signum)
 {
 	spdlog::info("Received signal {}", signum);
 	signal_flag++;
-	mavlink_thread_signal++;
 	wfb_thread_signal++;
 	osd_thread_signal++;
 }
@@ -981,10 +972,6 @@ void printHelp() {
     "\n"
     "    --socket <socket>         - read data from socket\n"
     "\n"
-    "    --mavlink-port <port>     - UDP port for mavlink telemetry        (Default: 14550)\n"
-    "\n"
-    "    --mavlink-dvr-on-arm      - Start recording when armed\n"
-    "\n"
     "    --codec <codec>           - [ Deprecated ] Video codec, should be the same as on VTX  (Default: h265 <h264|h265>)\n"
 	"                                Now codec is detected dynamically during runtime. Passed value <codec> will ignored\n"
     "\n"
@@ -1046,7 +1033,6 @@ int main(int argc, char **argv)
 {
 	int ret;	
 	int i, j;
-	bool mavlink_thread = false;
 	int print_modelist = 0;
 	char* dvr_template = NULL;
     bool dvr_enable_osd = false;
@@ -1194,25 +1180,8 @@ int main(int argc, char **argv)
         	break;
    		}
 
-    	case OPT_MAVLINK_PORT: { // --mavlink-port
-        	char *end = nullptr;
-        	long v = strtol(optarg, &end, 10);
-        	if (*end != '\0' || v <= 0 || v > 65535) {
-            	spdlog::error("--mavlink-port: invalid port '{}'", optarg);
-            	printHelp();
-            	return -1;
-        	}
-        	mavlink_port = static_cast<int>(v);
-        	break;
-    	}
-
-    	case OPT_MAVLINK_DVR_ON_ARM: // --mavlink-dvr-on-arm
-        	mavlink_dvr_on_arm = true;
-        	break;
-
     	case OPT_OSD: // --osd
             enable_osd = true;
-            mavlink_thread = true;
         	break;
 
     	case OPT_OSD_CONFIG: // --osd-config
@@ -1347,7 +1316,7 @@ int main(int argc, char **argv)
 	ret = pthread_cond_init(&video_cond, NULL);
 	assert(!ret);
 
-	pthread_t tid_display, tid_osd, tid_mavlink, tid_dvr, tid_wfbcli;
+	pthread_t tid_display, tid_osd, tid_dvr, tid_wfbcli;
 	bool dvr_thread_started = false;
 	bool dvr_requested = (dvr_template != NULL);
 	if (dvr_requested && dvr_enable_osd) {
@@ -1399,10 +1368,6 @@ int main(int argc, char **argv)
             std::ifstream f(osd_config_path);
             osd_config = nlohmann::json::parse(f);
         }
-        if (mavlink_thread) {
-            ret = pthread_create(&tid_mavlink, NULL, __MAVLINK_THREAD__, &signal_flag);
-            assert(!ret);
-        }
         if (wfb_port) {
             wfb_thread_params *wfb_args = (wfb_thread_params *)malloc(sizeof *wfb_args);
             wfb_args->port = wfb_port;
@@ -1443,10 +1408,6 @@ int main(int argc, char **argv)
 	assert(!ret);
 
     if (enable_osd) {
-        if (mavlink_thread) {
-            ret = pthread_join(tid_mavlink, NULL);
-            assert(!ret);
-        }
         ret = pthread_join(tid_wfbcli, NULL);
         assert(!ret);
     }

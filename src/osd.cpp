@@ -1,7 +1,6 @@
 
 extern "C" {
 #include "drm.h"
-#include "mavlink.h"
 }
 #include "osd.h"
 #include "osd.hpp"
