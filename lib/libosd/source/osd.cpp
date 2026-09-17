@@ -166,8 +166,8 @@ void Osd::drawScreensaver(cairo_t *cr) {
         const int image_height = cairo_image_surface_get_height(screensaver_image_);
 
         if (image_width > width || image_height > height) {
-            spdlog::error("Screensaver image {} x {} larger than screen {} x {}", image_width, image_height, width,
-                          height);
+            spdlog::error(
+                "Screensaver image {} x {} larger than screen {} x {}", image_width, image_height, width, height);
 
             cairo_restore(cr);
             return;

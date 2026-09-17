@@ -13,7 +13,10 @@ constexpr uint MAX_WIDGET_REFRESH_MS = 2000;
 
 std::chrono::milliseconds resolveRefreshRate(const char *widget_name, uint refresh_rate, uint refresh_frequency_ms) {
     if (refresh_rate < refresh_frequency_ms || refresh_rate > MAX_WIDGET_REFRESH_MS) {
-        spdlog::warn("{}: Refresh rate '{}' is out of range [{}, {}]", widget_name, refresh_rate, refresh_frequency_ms,
+        spdlog::warn("{}: Refresh rate '{}' is out of range [{}, {}]",
+                     widget_name,
+                     refresh_rate,
+                     refresh_frequency_ms,
                      MAX_WIDGET_REFRESH_MS);
         spdlog::warn("{}: Using osd refresh rate: {}", widget_name, refresh_frequency_ms);
         return std::chrono::milliseconds(refresh_frequency_ms);

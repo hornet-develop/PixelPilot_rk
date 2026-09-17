@@ -50,6 +50,8 @@ extern "C" {
 #include "rtp_codec_detector.hpp"
 #include "rtp_receiver.hpp"
 #include "common.h"
+#include "config/config.hpp"
+#include "config/command_line.hpp"
 
 
 #define READ_BUF_SIZE (1024*1024) // SZ_1M https://github.com/rockchip-linux/mpp/blob/ed377c99a733e2cdbcc457a6aa3f0fcd438a9dff/osal/inc/mpp_common.h#L179
@@ -74,60 +76,6 @@ struct {
 	} frame_to_drm[MAX_FRAMES];
 } mpi;
 
-enum AppOption {
-    OPT_SOCKET = 256,
-    OPT_CODEC,
-    OPT_DVR,
-    OPT_DVR_START,
-    OPT_DVR_TEMPLATE,
-    OPT_DVR_OSD,
-    OPT_DVR_BITRATE,
-    OPT_DVR_SEGMENT_TIME,
-    OPT_DVR_MIN_FREE_MB,
-    OPT_DVR_REQUIRE_MOUNT,
-    OPT_LOG_LEVEL,
-    OPT_OSD,
-    OPT_OSD_CONFIG,
-    OPT_OSD_REFRESH,
-    OPT_OSD_ELEMENTS,
-    OPT_OSD_TELEM_LVL,
-    OPT_SCREEN_MODE,
-	OPT_TARGET_FRAME_RATE,
-    OPT_DISABLE_VSYNC,
-    OPT_SCREEN_MODE_LIST,
-    OPT_WFB_API_PORT,
-    OPT_SCREENSAVER_IMG,
-    OPT_VERSION
-};
-
-static const struct option pixelpilot_long_options[] = {
-    {"socket",              required_argument, 0, OPT_SOCKET},
-    {"codec",               required_argument, 0, OPT_CODEC},
-    {"dvr",                 required_argument, 0, OPT_DVR},
-    {"dvr-start",           no_argument,       0, OPT_DVR_START},
-    {"dvr-template",        required_argument, 0, OPT_DVR_TEMPLATE},
-    {"dvr-osd",             no_argument,       0, OPT_DVR_OSD},
-    {"dvr-bitrate",         required_argument, 0, OPT_DVR_BITRATE},
-    {"dvr-segment-time",    required_argument, 0, OPT_DVR_SEGMENT_TIME},
-    {"dvr-min-free-mb",     required_argument, 0, OPT_DVR_MIN_FREE_MB},
-    {"dvr-require-mount",   no_argument,       0, OPT_DVR_REQUIRE_MOUNT},
-    {"log-level",           required_argument, 0, OPT_LOG_LEVEL},
-    {"osd",                 no_argument,       0, OPT_OSD},
-    {"osd-config",          required_argument, 0, OPT_OSD_CONFIG},
-    {"osd-refresh",         required_argument, 0, OPT_OSD_REFRESH},
-    {"osd-elements",        required_argument, 0, OPT_OSD_ELEMENTS},
-    {"osd-telem-lvl",       required_argument, 0, OPT_OSD_TELEM_LVL},
-    {"screen-mode",         required_argument, 0, OPT_SCREEN_MODE},
-    {"target-frame-rate",   required_argument, 0, OPT_TARGET_FRAME_RATE},
-    {"disable-vsync",       no_argument,       0, OPT_DISABLE_VSYNC},
-    {"screen-mode-list",    no_argument,       0, OPT_SCREEN_MODE_LIST},
-    {"wfb-api-port",        required_argument, 0, OPT_WFB_API_PORT},
-    {"screensaver-image",   required_argument, 0, OPT_SCREENSAVER_IMG},
-    {"version",             no_argument,       0, OPT_VERSION},
-    {"help",                no_argument,       0, 'h'},
-    {0, 0, 0, 0}
-};
-
 struct timespec frame_stats[1000];
 
 struct modeset_output *output_list;
@@ -142,7 +90,6 @@ int video_zpos = 1;
 bool update_osd_video_size = false;
 bool enable_osd = false;
 bool disable_vsync = false;
-uint32_t refresh_frequency_ms = 1000;
 pthread_mutex_t osd_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 std::atomic<uint64_t> last_demux_output_ms{0};
@@ -151,7 +98,6 @@ std::atomic<bool> codec_changed = false;
 pthread_t tid_frame;
 VideoCodec codec = VideoCodec::H265;
 Dvr *dvr = NULL;
-int dvr_autostart = 0;
 int signal_flag = 0;
 
 // --- DVR writeback (WYSIWYG) capture pool ---
@@ -717,7 +663,7 @@ void cleanup_mpi(MppPacket &packet)
 	spdlog::info("MPI cleanup done");
 }
 
-int setup_drm(int print_modelist, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh, uint32_t target_frame_rate)
+int setup_drm(bool print_modelist, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh, uint32_t target_frame_rate)
 {
 	int ret = modeset_open(&drm_fd, "/dev/dri/card0");
 	if (ret < 0) {
@@ -847,10 +793,10 @@ void restart_mpi(MppPacket &packet, VideoCodec new_codec)
 }
 
 uint64_t first_frame_ms=0;
-void read_video_stream(MppPacket &packet, const std::string& bind_address, int port, const char* sock) {
+void read_video_stream(MppPacket &packet, const std::string& bind_address, int port, const std::string& sock, bool dvr_autostart) {
 	std::unique_ptr<RtpReceiver> rtp_receiver;
-	if (sock) {
-		rtp_receiver = std::make_unique<RtpReceiver>(sock);
+	if (!sock.empty()) {
+		rtp_receiver = std::make_unique<RtpReceiver>(sock.c_str());
 	} else {
 		rtp_receiver = std::make_unique<RtpReceiver>(bind_address, port);
 	}
@@ -944,330 +890,48 @@ void read_video_stream(MppPacket &packet, const std::string& bind_address, int p
     }
 };
 
-
-void printHelp() {
-  printf(
-    "PixelPilot FPV Decoder for Rockchip (%d.%d)\n"
-    "\n"
-    "  Usage:\n"
-    "    pixelpilot [Arguments]\n"
-    "\n"
-    "  Arguments:\n"
-	"    -a <address>              - Listen address for RTP video stream   (Default: 0.0.0.0)\n"
-    "\n"
-    "    -p <port>                 - UDP port for RTP video stream         (Default: 5600)\n"
-    "\n"
-    "    --socket <socket>         - read data from socket\n"
-    "\n"
-    "    --codec <codec>           - [ Deprecated ] Video codec, should be the same as on VTX  (Default: h265 <h264|h265>)\n"
-	"                                Now codec is detected dynamically during runtime. Passed value <codec> will ignored\n"
-    "\n"
-    "    --log-level <level>       - Log verbosity level, debug|info|warn|error (Default: info)\n"
-    "\n"
-    "    --osd                     - Enable OSD\n"
-    "\n"
-    "    --osd-config <file>       - Path to OSD configuration file\n"
-    "\n"
-    "    --osd-refresh <rate>      - Defines the delay between osd refresh (Default: 1000 ms)\n"
-    "\n"
-    "    --dvr-template <path>     - Save the video feed (no osd) to the provided filename template.\n"
-    "                                DVR is toggled by SIGUSR1 signal\n"
-    "                                Supports placeholders %%N - sequence number, %%Y - year, %%m - month, %%d - day,\n"
-    "                                %%H - hour, %%M - minute, %%S - second. Ex: /media/DVR/%%N_%%Y-%%m-%%d_%%H-%%M-%%S.ts\n"
-    "\n"
-    "    --dvr-start               - Start DVR immediately\n"
-    "\n"
-    "    --dvr-osd                 - Burn OSD into DVR recording (WYSIWYG via DRM writeback)\n"
-    "\n"
-    "    --dvr-bitrate <bps>       - Target bitrate for DVR re-encoding (Default: 8000000)\n"
-    "\n"
-    "    --dvr-segment-time <min>  - Start a new DVR file every N minutes (0 = disabled, Default: 0)\n"
-    "\n"
-    "    --dvr-min-free-mb <MB>    - Stop/refuse DVR recording below this free space (Default: 200)\n"
-    "\n"
-    "    --dvr-require-mount       - Only record if the DVR directory is on a mounted external device\n"
-    "\n"
-    "    --screen-mode <mode>      - Override default screen mode. <width>x<heigth>@<fps> ex: 1920x1080@120\n"
-    "\n"
-	"    --target-frame-rate <fps> - Target DRM refresh rate for mode selection (30..120), ex: 60\n"
-	"                                Makes DRM choose the highest available resolution at the requested FPS\n"
-	"                                For optimal smoothness, use a value equal to or divisible by the video FPS\n"
-    "\n"
-	"    --disable-vsync           - Disable VSYNC commits\n"
-	"\n"
-    "    --screen-mode-list        - Print the list of supported screen modes and exit\n"
-    "\n"
-    "    --wfb-api-port            - Port of wfb-server for cli statistics. (Default: 8003)\n"
-	"                                Use \"0\" to disable this stats\n"
-    "\n"
-	"    --screensaver-image       - Path to a PNG image to display on the screensaver\n"
-    "\n"
-    "    --version                 - Show program version\n"
-    "\n", APP_VERSION_MAJOR, APP_VERSION_MINOR
-  );
-}
-
-static void printVersion()
-{
-    printf("PixelPilot Rockchip %d.%d\n", APP_VERSION_MAJOR, APP_VERSION_MINOR);
-}
-
 // main
 
 int main(int argc, char **argv)
 {
 	int ret;	
 	int i, j;
-	int print_modelist = 0;
-	char* dvr_template = NULL;
-    bool dvr_enable_osd = false;
-    int dvr_bitrate = 8000000;
-    int dvr_segment_minutes = 0;
-    int dvr_min_free_mb = 200;
-    bool dvr_require_mount = false;
-	uint16_t listen_port = 5600;
-	std::string listen_address = "0.0.0.0";
-	const char* unix_socket = NULL;
-	uint16_t wfb_port = 8003;
-	uint16_t mode_width = 0;
-	uint16_t mode_height = 0;
-	uint32_t mode_vrefresh = 0;
-	uint32_t target_frame_rate = 0;
-	std::string osd_config_path;
-    std::string screensaver_image_path;
-	auto log_level = spdlog::level::info;
+	MppPacket packet;
 	
-    std::string pidFilePath = "/run/pixelpilot.pid";
+	Config config;
+	const auto config_path = findConfigPath(argc, argv);
+	if (!config_path.empty() && !loadConfigFile(config_path, config)) {
+		return -1;
+	}
+	const auto command_line_result = parseCommandLine(argc, argv, config);
+	if (command_line_result == CommandLineResult::ExitSuccess) {
+		return 0;
+	}
+	if (command_line_result == CommandLineResult::Error) {
+		return -1;
+	}
+	const bool print_modelist = command_line_result == CommandLineResult::PrintModeList;
+
+	std::string pidFilePath = "/run/pixelpilot.pid";
     std::ofstream pidFile(pidFilePath);
     pidFile << getpid();
     pidFile.close();
 
-	MppPacket packet;
+	// Legacy runtime globals
+	enable_osd = config.osd.enabled;
+	disable_vsync = !config.display.vsync;
 
-	// Load console arguments
-	int opt;
-	int option_index = 0;
-
-	while ((opt = getopt_long(argc, argv, "ha:p:", pixelpilot_long_options, &option_index)) != -1) {
-    	switch (opt) {
-
-    	case 'h':
-        	printHelp();
-        	return 0;
-
-		case 'a': { // -a <address>
-    		struct in_addr addr {};
-
-    		if (inet_pton(AF_INET, optarg, &addr) != 1) {
-        		spdlog::error("-a: invalid address '{}'", optarg);
-        		printHelp();
-        		return -1;
-    		}
-
-    		listen_address = optarg;
-    		break;
-		}
-
-    	case 'p': { // -p <port>
-        	char *end = nullptr;
-        	long v = strtol(optarg, &end, 10);
-        	if (*end != '\0' || v <= 0 || v > 65535) {
-            	spdlog::error("-p: invalid port '{}'", optarg);
-            	printHelp();
-            	return -1;
-        	}
-        	listen_port = static_cast<uint16_t>(v);
-        	break;
-    	}
-
-    	case OPT_SOCKET: // --socket
-        	unix_socket = optarg;
-        	break;
-
-    	case OPT_CODEC: // --codec (deprecated)
-        	spdlog::warn("--codec parameter is removed");
-        	break;
-
-    	case OPT_DVR: // --dvr (deprecated)
-        	dvr_template = optarg;
-        	dvr_autostart = 1;
-        	spdlog::warn("--dvr is deprecated. Use --dvr-template and --dvr-start");
-        	break;
-
-    	case OPT_DVR_START: // --dvr-start
-        	dvr_autostart = 1;
-        	break;
-
-    	case OPT_DVR_TEMPLATE: // --dvr-template
-        	dvr_template = optarg;
-        	break;
-
-        case OPT_DVR_OSD: // --dvr-osd
-            dvr_enable_osd = true;
-            break;
-
-        case OPT_DVR_BITRATE: { // --dvr-bitrate
-            char *end = nullptr;
-            long v = strtol(optarg, &end, 10);
-            if (*end != '\0' || v <= 0) {
-                spdlog::error("--dvr-bitrate: invalid value '{}'", optarg);
-                printHelp();
-                return -1;
-            }
-            dvr_bitrate = static_cast<int>(v);
-            break;
-        }
-
-        case OPT_DVR_SEGMENT_TIME: { // --dvr-segment-time
-            char *end = nullptr;
-            long v = strtol(optarg, &end, 10);
-            if (*end != '\0' || v < 0 || v > 60) {
-                spdlog::error("--dvr-segment-time: invalid value '{}' (expected 0..60 minutes)", optarg);
-                printHelp();
-                return -1;
-            }
-            dvr_segment_minutes = static_cast<int>(v);
-            break;
-        }
-
-        case OPT_DVR_MIN_FREE_MB: { // --dvr-min-free-mb
-            char *end = nullptr;
-            long v = strtol(optarg, &end, 10);
-            if (*end != '\0' || v < 0) {
-                spdlog::error("--dvr-min-free-mb: invalid value '{}'", optarg);
-                printHelp();
-                return -1;
-            }
-            dvr_min_free_mb = static_cast<int>(v);
-            break;
-        }
-
-        case OPT_DVR_REQUIRE_MOUNT: // --dvr-require-mount
-            dvr_require_mount = true;
-            break;
-
-    	case OPT_LOG_LEVEL: { // --log-level
-        	std::string log_l(optarg);
-        	if (log_l == "info") {
-            	log_level = spdlog::level::info;
-        	} else if (log_l == "debug") {
-            	log_level = spdlog::level::debug;
-            	spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [thread %t] [%s:%#] [%^%l%$] %v");
-        	} else if (log_l == "warn") {
-            	log_level = spdlog::level::warn;
-        	} else if (log_l == "error") {
-            	log_level = spdlog::level::err;
-        	} else {
-            	spdlog::error("invalid log level '{}'", log_l);
-            	printHelp();
-            	return -1;
-        	}
-        	break;
-   		}
-
-    	case OPT_OSD: // --osd
-            enable_osd = true;
-        	break;
-
-    	case OPT_OSD_CONFIG: // --osd-config
-        	osd_config_path = std::string(optarg);
-        	break;
-
-    	case OPT_OSD_REFRESH: { // --osd-refresh
-        	char *end = nullptr;
-        	long v = strtol(optarg, &end, 10);
-        	if (*end != '\0' || v <= 0 || v > 2000) {
-            	spdlog::error("--osd-refresh: invalid value '{}'", optarg);
-            	printHelp();
-            	return -1;
-        	}
-        	refresh_frequency_ms = static_cast<uint32_t>(v);
-        	break;
-    	}
-
-    	case OPT_OSD_ELEMENTS: // --osd-elements (deprecated)
-        	spdlog::warn("--osd-elements parameter is removed");
-        	break;
-
-    	case OPT_OSD_TELEM_LVL: // --osd-telem-lvl (deprecated)
-        	spdlog::warn("--osd-telem-lvl parameter is removed");
-        	break;
-
-    	case OPT_SCREEN_MODE: { // --screen-mode
-        	int w = 0, h = 0, r = 0;
-        	if (sscanf(optarg, "%dx%d@%d", &w, &h, &r) != 3 || w <= 0 || h <= 0 || r <= 0) {
-            	spdlog::error("invalid --screen-mode '{}'", optarg);
-            	printHelp();
-            	return -1;
-        	}
-        	mode_width    = static_cast<uint16_t>(w);
-        	mode_height   = static_cast<uint16_t>(h);
-        	mode_vrefresh = static_cast<uint32_t>(r);
-        	break;
-    	}
-
-    	case OPT_TARGET_FRAME_RATE: { // --target-frame-rate
-        	char *end = nullptr;
-        	long v = strtol(optarg, &end, 10);
-        	if (*end != '\0' || v < 30 || v > 120) {
-            	spdlog::error("invalid --target-frame-rate '{}'", optarg);
-            	printHelp();
-            	return -1;
-        	}
-        	target_frame_rate = static_cast<uint32_t>(v);
-        	break;
-    	}
-
-		case OPT_DISABLE_VSYNC: // --disable-vsync
-        	disable_vsync = true;
-        	break;
-
-    	case OPT_SCREEN_MODE_LIST: // --screen-mode-list
-        	print_modelist = 1;
-        	break;
-
-    	case OPT_WFB_API_PORT: { // --wfb-api-port
-        	char *end = nullptr;
-        	long v = strtol(optarg, &end, 10);
-        	if (*end != '\0' || v < 0 || v > 65535) {
-            	spdlog::error("--wfb-api-port: invalid port '{}'", optarg);
-            	printHelp();
-            	return -1;
-        	}
-        	wfb_port = static_cast<uint16_t>(v);
-        	break;
-    	}
-
-        case OPT_SCREENSAVER_IMG: { // --screensaver-image
-            std::string image_path = std::string(optarg);
-            if (!std::filesystem::exists(image_path)){
-                spdlog::error("--screensaver-image: invalid path to image '{}'", optarg);
-                printHelp();
-                return -1;
-            }
-            screensaver_image_path = image_path;
-            break;
-        }
-
-        case OPT_VERSION: // --version
-        	printVersion();
-        	return 0;
-
-    	case '?':
-    	default:
-    		printHelp();
-        	return -1;
-    	}
+	spdlog::set_level(config.logging.level);
+	if (config.logging.level == spdlog::level::debug) {
+		spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [thread %t] [%s:%#] [%^%l%$] %v");
 	}
 
-	spdlog::set_level(log_level);
-
-	printVersion();
-	spdlog::info("disable_vsync: {}", disable_vsync);
+	spdlog::info("PixelPilot Rockchip {}.{}", APP_VERSION_MAJOR, APP_VERSION_MINOR);
+	spdlog::info("vsync: {}", config.display.vsync);
 
     ////////////////////////////////////////////// DRM SETUP
 
-	int drm_ret = setup_drm(print_modelist, mode_width, mode_height, mode_vrefresh, target_frame_rate);
+	int drm_ret = setup_drm(print_modelist, config.display.width, config.display.height, config.display.refresh_rate, config.display.target_frame_rate);
 
 	if (print_modelist) {
         remove(pidFilePath.c_str());
@@ -1285,7 +949,7 @@ int main(int argc, char **argv)
 	signal(SIGINT, sig_handler);
     signal(SIGTERM, sig_handler);
 	signal(SIGPIPE, sig_handler);
-	if (dvr_template) {
+	if (!config.dvr.file_template.empty()) {
 		signal(SIGUSR1, sigusr1_handler);
 	}
 	signal(SIGUSR2, sigusr2_handler);
@@ -1299,8 +963,8 @@ int main(int argc, char **argv)
 
 	pthread_t tid_display, tid_dvr, tid_wfbcli;
 	bool dvr_thread_started = false;
-	bool dvr_requested = (dvr_template != NULL);
-	if (dvr_requested && dvr_enable_osd) {
+	bool dvr_requested = !config.dvr.file_template.empty();
+	if (dvr_requested && config.dvr.osd) {
 		dvr_wb_mode = setup_writeback();
 		if (!dvr_wb_mode) {
 			spdlog::error("--dvr-osd requires DRM writeback capture, which is unavailable - "
@@ -1310,12 +974,12 @@ int main(int argc, char **argv)
 	}
 	if (dvr_requested) {
 		dvr_thread_params args;
-		args.filename_template = dvr_template;
-        args.enable_osd_in_dvr = dvr_enable_osd;
-        args.dvr_bitrate = dvr_bitrate;
-        args.dvr_segment_minutes = dvr_segment_minutes;
-        args.dvr_min_free_bytes = (uint64_t)dvr_min_free_mb * 1024 * 1024;
-        args.dvr_require_mount = dvr_require_mount;
+		args.filename_template = config.dvr.file_template;
+        args.enable_osd_in_dvr = config.dvr.osd;
+        args.dvr_bitrate = config.dvr.bitrate;
+        args.dvr_segment_minutes = config.dvr.segment_time_min;
+        args.dvr_min_free_bytes = (uint64_t)config.dvr.min_free_mb * 1024 * 1024;
+        args.dvr_require_mount = config.dvr.require_mount;
         args.display_fps    = output_list->mode.vrefresh;
         args.enable_wb = dvr_wb_mode;
         if (dvr_wb_mode) {
@@ -1346,30 +1010,35 @@ int main(int argc, char **argv)
 	OsdServiceParams params;
 	params.out = output_list;
 	params.fd = drm_fd;
-	params.config_path = osd_config_path;
-	params.screensaver_image = screensaver_image_path;
-	params.refresh_frequency_ms = refresh_frequency_ms;
-	params.enabled = enable_osd;
+	params.config_path = config.osd.config_path;
+	params.screensaver_image = config.screensaver.image_path;
+	params.refresh_frequency_ms = config.osd.refresh_ms;
+	params.enabled = config.osd.enabled;
+	params.widget_enabled = config.osd.widget_enabled;
 
 	bool osd_started = OsdService::start(std::move(params));
 	assert(osd_started);
 
-    if (enable_osd && wfb_port) {
+	bool wfb_thread_started = false;
+    if (config.osd.enabled && config.wfb.api_port) {
         wfb_thread_params *wfb_args = (wfb_thread_params *)malloc(sizeof *wfb_args);
-        wfb_args->port = wfb_port;
+        wfb_args->port = config.wfb.api_port;
         ret = pthread_create(&tid_wfbcli, NULL, __WFB_CLI_THREAD__, wfb_args);
         assert(!ret);
+		if (!ret) {
+			wfb_thread_started = true;
+		}
     }
 
 	////////////////////////////////////////////// MAIN LOOP
 
-	read_video_stream(packet, listen_address, listen_port, unix_socket);
+	read_video_stream(packet, config.video.address, config.video.port, config.video.socket, config.dvr.start);
 
     ////////////////////////////////////////////// THREAD CLEANUP
 
-	if (enable_osd) {
-        ret = pthread_join(tid_wfbcli, NULL);
-        assert(!ret);
+	if (config.osd.enabled && wfb_thread_started) {
+		ret = pthread_join(tid_wfbcli, NULL);
+		assert(!ret);
     }
 
     if (dvr_thread_started) {

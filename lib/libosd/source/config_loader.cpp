@@ -30,8 +30,8 @@ cairo_surface_t *openIcon(const std::string &widget_name, const std::filesystem:
     cairo_surface_t *icon = cairo_image_surface_create_from_png(icon_path.c_str());
     const cairo_status_t status = cairo_surface_status(icon);
     if (status != CAIRO_STATUS_SUCCESS) {
-        spdlog::error("Widget '{}': Can't open icon '{}': {}", widget_name, icon_path.string(),
-                      cairo_status_to_string(status));
+        spdlog::error(
+            "Widget '{}': Can't open icon '{}': {}", widget_name, icon_path.string(), cairo_status_to_string(status));
         cairo_surface_destroy(icon);
         return nullptr;
     }
@@ -124,13 +124,13 @@ bool OsdConfigLoader::loadWidget(const Json &widget, WidgetCommon params) {
 
     if (type == "TextWidget") {
         const auto text = widget.at("text").get<std::string>();
-        return osd_.addWidget(std::move(params.id), std::make_unique<TextWidget>(x, y, text, num_args),
-                              std::move(params.matchers));
+        return osd_.addWidget(
+            std::move(params.id), std::make_unique<TextWidget>(x, y, text, num_args), std::move(params.matchers));
     }
     if (type == "TplTextWidget") {
         const auto tpl = widget.at("template").get<std::string>();
-        return osd_.addWidget(std::move(params.id), std::make_unique<TplTextWidget>(x, y, tpl, num_args),
-                              std::move(params.matchers));
+        return osd_.addWidget(
+            std::move(params.id), std::make_unique<TplTextWidget>(x, y, tpl, num_args), std::move(params.matchers));
     }
     if (type == "IconTplTextWidget") {
         const auto tpl = widget.at("template").get<std::string>();
@@ -139,7 +139,8 @@ bool OsdConfigLoader::loadWidget(const Json &widget, WidgetCommon params) {
         if (!icon) {
             return false;
         }
-        return osd_.addWidget(std::move(params.id), std::make_unique<IconTplTextWidget>(x, y, icon, tpl, num_args),
+        return osd_.addWidget(std::move(params.id),
+                              std::make_unique<IconTplTextWidget>(x, y, icon, tpl, num_args),
                               std::move(params.matchers));
     }
 
@@ -171,8 +172,8 @@ bool OsdConfigLoader::loadWidget(const Json &widget, WidgetCommon params) {
         if (!icon) {
             return false;
         }
-        return osd_.addWidget(std::move(params.id), std::make_unique<IconStatusWidget>(x, y, icon),
-                              std::move(params.matchers));
+        return osd_.addWidget(
+            std::move(params.id), std::make_unique<IconStatusWidget>(x, y, icon), std::move(params.matchers));
     }
     if (type == "IconTplStatusWidget") {
         const auto tpl = widget.at("template").get<std::string>();
@@ -181,7 +182,8 @@ bool OsdConfigLoader::loadWidget(const Json &widget, WidgetCommon params) {
         if (!icon) {
             return false;
         }
-        return osd_.addWidget(std::move(params.id), std::make_unique<IconTplStatusWidget>(x, y, icon, tpl, num_args),
+        return osd_.addWidget(std::move(params.id),
+                              std::make_unique<IconTplStatusWidget>(x, y, icon, tpl, num_args),
                               std::move(params.matchers));
     }
     if (type == "DvrStatusWidget") {
@@ -190,8 +192,8 @@ bool OsdConfigLoader::loadWidget(const Json &widget, WidgetCommon params) {
         if (!icon) {
             return false;
         }
-        return osd_.addWidget(std::move(params.id), std::make_unique<DvrStatusWidget>(x, y, icon),
-                              std::move(params.matchers));
+        return osd_.addWidget(
+            std::move(params.id), std::make_unique<DvrStatusWidget>(x, y, icon), std::move(params.matchers));
     }
     if (type == "DvrStorageWidget") {
         const auto icon_path = widget.at("icon_path").get<std::string>();
@@ -199,8 +201,8 @@ bool OsdConfigLoader::loadWidget(const Json &widget, WidgetCommon params) {
         if (!icon) {
             return false;
         }
-        return osd_.addWidget(std::move(params.id), std::make_unique<DvrStorageWidget>(x, y, icon),
-                              std::move(params.matchers));
+        return osd_.addWidget(
+            std::move(params.id), std::make_unique<DvrStorageWidget>(x, y, icon), std::move(params.matchers));
     }
 
     // -------------------------------------------------------------------------
@@ -217,10 +219,11 @@ bool OsdConfigLoader::loadWidget(const Json &widget, WidgetCommon params) {
         if (!icon) {
             return false;
         }
-        return osd_.addWidget(std::move(params.id),
-                              std::make_unique<VideoWidget>(x, y, window_size_ms, bucket_size_ms, icon, tpl,
-                                                            refresh_rate_ms, num_args, refresh_frequency_ms),
-                              std::move(params.matchers));
+        return osd_.addWidget(
+            std::move(params.id),
+            std::make_unique<VideoWidget>(
+                x, y, window_size_ms, bucket_size_ms, icon, tpl, refresh_rate_ms, num_args, refresh_frequency_ms),
+            std::move(params.matchers));
     }
     if (type == "VideoBitrateWidget") {
         const auto tpl = widget.at("template").get<std::string>();
@@ -232,10 +235,11 @@ bool OsdConfigLoader::loadWidget(const Json &widget, WidgetCommon params) {
         if (!icon) {
             return false;
         }
-        return osd_.addWidget(std::move(params.id),
-                              std::make_unique<VideoBitrateWidget>(x, y, window_size_ms, bucket_size_ms, icon, tpl,
-                                                                   refresh_rate_ms, num_args, refresh_frequency_ms),
-                              std::move(params.matchers));
+        return osd_.addWidget(
+            std::move(params.id),
+            std::make_unique<VideoBitrateWidget>(
+                x, y, window_size_ms, bucket_size_ms, icon, tpl, refresh_rate_ms, num_args, refresh_frequency_ms),
+            std::move(params.matchers));
     }
     if (type == "VideoDecodeLatencyWidget") {
         const auto tpl = widget.at("template").get<std::string>();
@@ -247,11 +251,11 @@ bool OsdConfigLoader::loadWidget(const Json &widget, WidgetCommon params) {
         if (!icon) {
             return false;
         }
-        return osd_.addWidget(std::move(params.id),
-                              std::make_unique<VideoDecodeLatencyWidget>(x, y, window_size_ms, bucket_size_ms, icon,
-                                                                         tpl, refresh_rate_ms, num_args,
-                                                                         refresh_frequency_ms),
-                              std::move(params.matchers));
+        return osd_.addWidget(
+            std::move(params.id),
+            std::make_unique<VideoDecodeLatencyWidget>(
+                x, y, window_size_ms, bucket_size_ms, icon, tpl, refresh_rate_ms, num_args, refresh_frequency_ms),
+            std::move(params.matchers));
     }
 
     // -------------------------------------------------------------------------
@@ -268,7 +272,8 @@ bool OsdConfigLoader::loadWidget(const Json &widget, WidgetCommon params) {
             color.at("b").get<double>(),
             color.at("alpha").get<double>(),
         };
-        return osd_.addWidget(std::move(params.id), std::make_unique<BoxWidget>(x, y, width, height, cairo_color),
+        return osd_.addWidget(std::move(params.id),
+                              std::make_unique<BoxWidget>(x, y, width, height, cairo_color),
                               std::move(params.matchers));
     }
     if (type == "BarChartWidget") {
@@ -312,12 +317,12 @@ bool OsdConfigLoader::loadWidget(const Json &widget, WidgetCommon params) {
     // -------------------------------------------------------------------------
 
     if (type == "GPSWidget") {
-        return osd_.addWidget(std::move(params.id), std::make_unique<GPSWidget>(x, y, num_args),
-                              std::move(params.matchers));
+        return osd_.addWidget(
+            std::move(params.id), std::make_unique<GPSWidget>(x, y, num_args), std::move(params.matchers));
     }
     if (type == "TimeWidget") {
-        return osd_.addWidget(std::move(params.id), std::make_unique<TimeWidget>(x, y, num_args),
-                              std::move(params.matchers));
+        return osd_.addWidget(
+            std::move(params.id), std::make_unique<TimeWidget>(x, y, num_args), std::move(params.matchers));
     }
     if (type == "PopupWidget") {
         const auto timeout_ms = widget.at("timeout_ms").get<uint>();
@@ -325,12 +330,13 @@ bool OsdConfigLoader::loadWidget(const Json &widget, WidgetCommon params) {
             spdlog::error("Widget '{}': timeout_ms must be greater than zero", name);
             return false;
         }
-        return osd_.addWidget(std::move(params.id), std::make_unique<PopupWidget>(x, y, timeout_ms, num_args),
+        return osd_.addWidget(std::move(params.id),
+                              std::make_unique<PopupWidget>(x, y, timeout_ms, num_args),
                               std::move(params.matchers));
     }
     if (type == "DebugWidget") {
-        return osd_.addWidget(std::move(params.id), std::make_unique<DebugWidget>(x, y, num_args),
-                              std::move(params.matchers));
+        return osd_.addWidget(
+            std::move(params.id), std::make_unique<DebugWidget>(x, y, num_args), std::move(params.matchers));
     }
     spdlog::error("Widget '{}': unknown type '{}'", name, type);
     return false;
