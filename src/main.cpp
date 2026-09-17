@@ -895,7 +895,6 @@ void read_video_stream(MppPacket &packet, const std::string& bind_address, int p
 int main(int argc, char **argv)
 {
 	int ret;	
-	int i, j;
 	MppPacket packet;
 	
 	Config config;
@@ -919,19 +918,19 @@ int main(int argc, char **argv)
 
 	// Legacy runtime globals
 	enable_osd = config.osd.enabled;
-	disable_vsync = !config.display.vsync;
+	disable_vsync = !config.system.vsync;
 
-	spdlog::set_level(config.logging.level);
-	if (config.logging.level == spdlog::level::debug) {
+	spdlog::set_level(config.system.log_level);
+	if (config.system.log_level == spdlog::level::debug) {
 		spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [thread %t] [%s:%#] [%^%l%$] %v");
 	}
 
 	spdlog::info("PixelPilot Rockchip {}.{}", APP_VERSION_MAJOR, APP_VERSION_MINOR);
-	spdlog::info("vsync: {}", config.display.vsync);
+	spdlog::info("vsync: {}", config.system.vsync);
 
     ////////////////////////////////////////////// DRM SETUP
 
-	int drm_ret = setup_drm(print_modelist, config.display.width, config.display.height, config.display.refresh_rate, config.display.target_frame_rate);
+	int drm_ret = setup_drm(print_modelist, config.system.screen_width, config.system.screen_height, config.system.screen_refresh_rate, config.system.target_frame_rate);
 
 	if (print_modelist) {
         remove(pidFilePath.c_str());
@@ -1011,7 +1010,7 @@ int main(int argc, char **argv)
 	params.out = output_list;
 	params.fd = drm_fd;
 	params.config_path = config.osd.config_path;
-	params.screensaver_image = config.screensaver.image_path;
+	params.screensaver_image = config.system.screensaver_image;
 	params.refresh_frequency_ms = config.osd.refresh_ms;
 	params.enabled = config.osd.enabled;
 	params.widget_enabled = config.osd.widget_enabled;
@@ -1020,9 +1019,9 @@ int main(int argc, char **argv)
 	assert(osd_started);
 
 	bool wfb_thread_started = false;
-    if (config.osd.enabled && config.wfb.api_port) {
+    if (config.osd.enabled && config.system.wfb_port) {
         wfb_thread_params *wfb_args = (wfb_thread_params *)malloc(sizeof *wfb_args);
-        wfb_args->port = config.wfb.api_port;
+        wfb_args->port = config.system.wfb_port;
         ret = pthread_create(&tid_wfbcli, NULL, __WFB_CLI_THREAD__, wfb_args);
         assert(!ret);
 		if (!ret) {
@@ -1032,7 +1031,7 @@ int main(int argc, char **argv)
 
 	////////////////////////////////////////////// MAIN LOOP
 
-	read_video_stream(packet, config.video.address, config.video.port, config.video.socket, config.dvr.start);
+	read_video_stream(packet, config.system.listen_address, config.system.listen_port, config.system.socket_path, config.dvr.start);
 
     ////////////////////////////////////////////// THREAD CLEANUP
 

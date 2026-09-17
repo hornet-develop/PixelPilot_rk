@@ -172,7 +172,7 @@ bool parseLogLevel(std::string_view value, spdlog::level::level_enum &level) {
     return true;
 }
 
-bool parseScreenMode(const char *value, DisplayConfig &display) {
+bool parseScreenMode(const char *value, SystemConfig &system) {
     int width = 0;
     int height = 0;
     int refresh_rate = 0;
@@ -183,9 +183,9 @@ bool parseScreenMode(const char *value, DisplayConfig &display) {
         height > std::numeric_limits<uint16_t>::max()) {
         return false;
     }
-    display.width = static_cast<uint16_t>(width);
-    display.height = static_cast<uint16_t>(height);
-    display.refresh_rate = static_cast<uint32_t>(refresh_rate);
+    system.screen_width = static_cast<uint16_t>(width);
+    system.screen_height = static_cast<uint16_t>(height);
+    system.screen_refresh_rate = static_cast<uint32_t>(refresh_rate);
     return true;
 }
 
@@ -238,18 +238,18 @@ CommandLineResult parseCommandLine(int argc, char **argv, Config &config) {
                 if (inet_pton(AF_INET, optarg, &address) != 1) {
                     return invalidArgument("-a", optarg, "IPv4 address");
                 }
-                config.video.address = optarg;
+                config.system.listen_address = optarg;
                 break;
             }
 
             case 'p': // -p <port>
-                if (!parseInteger(optarg, 1, std::numeric_limits<uint16_t>::max(), config.video.port)) {
+                if (!parseInteger(optarg, 1, std::numeric_limits<uint16_t>::max(), config.system.listen_port)) {
                     return invalidArgument("-p", optarg, "1..65535");
                 }
                 break;
 
             case OPT_SOCKET: // --socket
-                config.video.socket = optarg;
+                config.system.socket_path = optarg;
                 break;
 
             case OPT_CODEC: // --codec (deprecated)
@@ -297,7 +297,7 @@ CommandLineResult parseCommandLine(int argc, char **argv, Config &config) {
                 break;
 
             case OPT_LOG_LEVEL: // --log-level
-                if (!parseLogLevel(optarg, config.logging.level)) {
+                if (!parseLogLevel(optarg, config.system.log_level)) {
                     return invalidArgument("--log-level", optarg, "debug|info|warn|error");
                 }
                 break;
@@ -325,7 +325,7 @@ CommandLineResult parseCommandLine(int argc, char **argv, Config &config) {
                 break;
 
             case OPT_SCREEN_MODE: // --screen-mode
-                if (!parseScreenMode(optarg, config.display)) {
+                if (!parseScreenMode(optarg, config.system)) {
                     return invalidArgument("--screen-mode", optarg, "<width>x<height>@<refresh>");
                 }
                 break;
@@ -335,12 +335,12 @@ CommandLineResult parseCommandLine(int argc, char **argv, Config &config) {
                 if (!parseInteger(optarg, 0, 120, frame_rate) || (frame_rate != 0 && frame_rate < 30)) {
                     return invalidArgument("--target-frame-rate", optarg, "0 or 30..120");
                 }
-                config.display.target_frame_rate = frame_rate;
+                config.system.target_frame_rate = frame_rate;
                 break;
             }
 
             case OPT_DISABLE_VSYNC: // --disable-vsync
-                config.display.vsync = false;
+                config.system.vsync = false;
                 break;
 
             case OPT_SCREEN_MODE_LIST: // --screen-mode-list
@@ -348,7 +348,7 @@ CommandLineResult parseCommandLine(int argc, char **argv, Config &config) {
                 break;
 
             case OPT_WFB_API_PORT: // --wfb-api-port
-                if (!parseInteger(optarg, 0, std::numeric_limits<uint16_t>::max(), config.wfb.api_port)) {
+                if (!parseInteger(optarg, 0, std::numeric_limits<uint16_t>::max(), config.system.wfb_port)) {
                     return invalidArgument("--wfb-api-port", optarg, "0..65535");
                 }
                 break;
@@ -358,7 +358,7 @@ CommandLineResult parseCommandLine(int argc, char **argv, Config &config) {
                 if (!std::filesystem::exists(image_path)) {
                     return invalidArgument("--screensaver-image", optarg, "existing file");
                 }
-                config.screensaver.image_path = image_path.string();
+                config.system.screensaver_image = image_path.string();
                 break;
             }
 

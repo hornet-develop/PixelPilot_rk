@@ -58,7 +58,7 @@ bool parseLogLevel(std::string_view value, spdlog::level::level_enum &result) {
     return true;
 }
 
-bool parseScreenMode(const char *value, DisplayConfig &display) {
+bool parseScreenMode(const char *value, SystemConfig &system) {
     if (!value || *value == '\0') {
         return true;
     }
@@ -72,9 +72,9 @@ bool parseScreenMode(const char *value, DisplayConfig &display) {
         height > std::numeric_limits<uint16_t>::max()) {
         return false;
     }
-    display.width = static_cast<uint16_t>(width);
-    display.height = static_cast<uint16_t>(height);
-    display.refresh_rate = static_cast<uint32_t>(refresh_rate);
+    system.screen_width = static_cast<uint16_t>(width);
+    system.screen_height = static_cast<uint16_t>(height);
+    system.screen_refresh_rate = static_cast<uint32_t>(refresh_rate);
     return true;
 }
 
@@ -94,53 +94,62 @@ int configHandler(void *user, const char *section, const char *name, const char 
     const std::string_view key = name;
     const std::string_view val = value;
 
-    if (section_name == "video") {
-        if (key == "address") {
+    if (section_name == "system") {
+        if (key == "listen_address") {
             struct in_addr address{};
             if (inet_pton(AF_INET, value, &address) != 1) {
-                return invalidConfigValue("video.address", val, "IPv4 address");
+                return invalidConfigValue("system.listen_address", val, "IPv4 address");
             }
-            config.video.address = value;
+            config.system.listen_address = value;
             return 1;
         }
-        if (key == "port") {
-            if (!parseInteger(value, 1, std::numeric_limits<uint16_t>::max(), config.video.port)) {
-                return invalidConfigValue("video.port", val, "1..65535");
+        if (key == "listen_port") {
+            if (!parseInteger(value, 1, std::numeric_limits<uint16_t>::max(), config.system.listen_port)) {
+                return invalidConfigValue("system.listen_port", val, "1..65535");
             }
             return 1;
         }
         if (key == "socket") {
-            config.video.socket = value;
+            config.system.socket_path = value;
             return 1;
         }
-    }
-    if (section_name == "logging") {
-        if (key == "level") {
-            if (!parseLogLevel(val, config.logging.level)) {
-                return invalidConfigValue("logging.level", val, "debug|info|warn|error");
+        if (key == "log_level") {
+            if (!parseLogLevel(val, config.system.log_level)) {
+                return invalidConfigValue("system.log_level", val, "debug|info|warn|error");
             }
             return 1;
         }
-    }
-    if (section_name == "display") {
         if (key == "screen_mode") {
-            if (!parseScreenMode(value, config.display)) {
-                return invalidConfigValue("display.screen_mode", val, "<width>x<height>@<refresh>");
+            if (!parseScreenMode(value, config.system)) {
+                return invalidConfigValue("system.screen_mode", val, "<width>x<height>@<refresh>");
             }
             return 1;
         }
         if (key == "target_frame_rate") {
             uint32_t frame_rate;
             if (!parseInteger(value, 0, 120, frame_rate) || (frame_rate != 0 && frame_rate < 30)) {
-                return invalidConfigValue("display.target_frame_rate", val, "0 or 30..120");
+                return invalidConfigValue("system.target_frame_rate", val, "0 or 30..120");
             }
-            config.display.target_frame_rate = frame_rate;
+            config.system.target_frame_rate = frame_rate;
             return 1;
         }
         if (key == "vsync") {
-            if (!parseBool(val, config.display.vsync)) {
-                return invalidConfigValue("display.vsync", val, "true|false");
+            if (!parseBool(val, config.system.vsync)) {
+                return invalidConfigValue("system.vsync", val, "true|false");
             }
+            return 1;
+        }
+        if (key == "wfb_port") {
+            if (!parseInteger(value, 0, std::numeric_limits<uint16_t>::max(), config.system.wfb_port)) {
+                return invalidConfigValue("system.wfb_port", val, "0..65535");
+            }
+            return 1;
+        }
+        if (key == "screensaver_image") {
+            if (!val.empty() && !std::filesystem::exists(value)) {
+                return invalidConfigValue("system.screensaver_image", val, "existing file");
+            }
+            config.system.screensaver_image = value;
             return 1;
         }
     }
@@ -214,23 +223,6 @@ int configHandler(void *user, const char *section, const char *name, const char 
             if (!parseBool(val, config.dvr.require_mount)) {
                 return invalidConfigValue("dvr.require_mount", val, "true|false");
             }
-            return 1;
-        }
-    }
-    if (section_name == "wfb") {
-        if (key == "api_port") {
-            if (!parseInteger(value, 0, std::numeric_limits<uint16_t>::max(), config.wfb.api_port)) {
-                return invalidConfigValue("wfb.api_port", val, "0..65535");
-            }
-            return 1;
-        }
-    }
-    if (section_name == "screensaver") {
-        if (key == "image") {
-            if (!val.empty() && !std::filesystem::exists(value)) {
-                return invalidConfigValue("screensaver.image", val, "existing file");
-            }
-            config.screensaver.image_path = value;
             return 1;
         }
     }

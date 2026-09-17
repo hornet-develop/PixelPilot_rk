@@ -8,23 +8,21 @@
 
 #include <spdlog/common.h>
 
-struct VideoConfig {
-    std::string address = "0.0.0.0";
-    uint16_t port = 5600;
-    std::string socket;
-};
+struct SystemConfig {
+    std::string listen_address = "0.0.0.0";
+    uint16_t listen_port = 5600;
+    std::string socket_path;
 
-struct LoggingConfig {
-    spdlog::level::level_enum level = spdlog::level::info;
-};
-
-struct DisplayConfig {
-    uint16_t width = 0;
-    uint16_t height = 0;
-    uint32_t refresh_rate = 0;
-
+    uint16_t screen_width = 0;
+    uint16_t screen_height = 0;
+    uint32_t screen_refresh_rate = 0;
     uint32_t target_frame_rate = 0;
     bool vsync = true;
+    
+    uint16_t wfb_port = 8003;
+
+    spdlog::level::level_enum log_level = spdlog::level::info;
+    std::string screensaver_image;
 };
 
 struct DvrConfig {
@@ -54,26 +52,14 @@ struct OsdConfig {
         {"wfb_status", true},
         {"drone_status", true},
         {"dvr_status", true},
-        {"msposd", true}
+        {"msposd", true},
     };
 };
 
-struct WfbConfig {
-    uint16_t api_port = 8003;
-};
-
-struct ScreensaverConfig {
-    std::string image_path;
-};
-
 struct Config {
-    VideoConfig video;
-    LoggingConfig logging;
-    DisplayConfig display;
+    SystemConfig system;
     DvrConfig dvr;
     OsdConfig osd;
-    WfbConfig wfb;
-    ScreensaverConfig screensaver;
 };
 
 bool loadConfigFile(const std::filesystem::path &path, Config &config);
