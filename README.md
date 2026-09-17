@@ -83,27 +83,8 @@ lot of facts to which widgets can subscribe to:
 | `rtp.received_bytes`           | uint | Number of bytes received from rtp stream (published for each packet)      |
 | `osd.custom_message`           | str  | The custom message passed via `--osd-custom-message` feature              |
 
-There are many facts based on Mavlink telemetry, see `mavlink.c`. All of them have tags "sysid" and
-"compid", but some have extra tags.
-Currently implemented fact categories are grouped by Mavlink message types:
-
-| Fact                                | Type     | Description                                                                                                                                                                                                                       |
-|:------------------------------------|:---------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `mavlink.heartbeet.base_mode.armed` | bool     | Is drone armed?                                                                                                                                                                                                                   |
-| `mavlink.raw_imu.*`                 | int      | Raw values from gyroscope and accelerometer, See [RAW_IMU](https://mavlink.io/en/messages/common.html#RAW_IMU)                                                                                                                    |
-| `mavlink.sys_status.*`              | int/uint | Some of the fields from [SYS_STATUS](https://mavlink.io/en/messages/common.html#SYS_STATUS)                                                                                                                                       |
-| `mavlink.battery_status.*`          | int      | Some of the fields from [BATTERY_STATUS](https://mavlink.io/en/messages/common.html#BATTERY_STATUS)                                                                                                                               |
-| `mavlink.rc_channels_raw.chanN`     | uint     | Raw values of remote control chanels (N is from 1 to 8)                                                                                                                                                                           |
-| `mavlink.gps_raw.*`                 | int/uint | Raw data from GNSS sensor, see [GPS_RAW_INT](https://mavlink.io/en/messages/common.html#GPS_RAW_INT)                                                                                                                              |
-| `mavlink.vfr_hud.*`                 | double   | Metrics common for fixed wing OSDs, see [VFR_HUD](https://mavlink.io/en/messages/common.html#VFR_HUD)                                                                                                                             |
-| `mavlink.global_position_int.*`     | int      | Position estimation based on sensor fusion, see [GLOBAL_POSITION_INT](https://mavlink.io/en/messages/common.html#GLOBAL_POSITION_INT)                                                                                             |
-| `mavlink.attitude.*`                | double   | See [ATTITUDE](https://mavlink.io/en/messages/common.html#ATTITUDE)                                                                                                                                                               |
-| `mavlink.radio_status.*`            | uint/int | Status of various radio equipment. Tags `{sysid: 3, compid: 68}` encode the [injected status of WFB-ng receiver](https://github.com/svpcom/wfb-ng/blob/4ea700606c259960ea169bad1f55fde77850013d/wfb_ng/conf/master.cfg#L227-L228) |
-
-More can be easily added later. You can use `DebugWidget` to inspect the current raw value of the fact(s).
-
 Pixelpilot is also able to connect to WFB-ng statistics API and extract some of the facts from there.
-Receiving packets statistics (each fact has "id" tag - channel name, eg "video"/"mavlink"/"tunnel" etc):
+Receiving packets statistics (each fact has "id" tag - channel name, eg "video"/"tunnel" etc):
 
 | Fact                          | Type | Description                          |
 |:------------------------------|:-----|:-------------------------------------|
@@ -194,7 +175,7 @@ Specific widgets expect quite concrete facts as input:
 * `VideoDecodeLatencyWidget` - shows video frame decode and display latency (avg/min/max).
   Uses `video.decode_and_handover_ms` fact
 * `GPSWidget` - displays GPS fix type (no fix / 2D fix / 3D fix etc) and GPS coordinates.
-  Uses `mavlink.gps_raw.fix_type`, `mavlink.gps_raw.lat` and `mavlink.gps_raw.lon` facts
+  Uses `gps_raw.fix_type`, `gps_raw.lat` and `gps_raw.lon` facts
 
 ## Known issues
 
@@ -207,7 +188,6 @@ It uses `rtp` library (https://github.com/ireader/media-server.git) to read the 
 It uses `mpp` library to decode MPEG frames using Rockchip hardware decoder.
 It uses [Direct Rendering Manager (DRM)](https://en.wikipedia.org/wiki/Direct_Rendering_Manager) to
 display video on the screen, see `drm.c`.
-It uses `mavlink` decoder to read Mavlink telemetry from telemetry UDP (if enabled), see `mavlink.c`
 It uses `cairo` library to draw OSD elements (if enabled), see `osd.c`.
 It re-encodes decoded frames to H265 with the Rockchip hardware encoder and muxes them to MPEG-TS as
 DVR (if enabled), so recording works regardless of the source codec. TS is append-only and carries
@@ -233,9 +213,6 @@ Pixelpilot starts several threads:
   render them on the screen.
   The loop yields on `video_mutex` and `video_cond` waiting for a new frame to
   display from FRAME_THREAD
-* MAVLINK_THREAD (if OSD and mavlink configured):
-  reads mavlink packets from UDP, decodes and updates `osd_vars` (without any mutex).
-  The loop yields on UDP read.
 * WFBCLI_THREAD (if OSD is enabled):
   connects to the local WFB instance stats API, reads JSON stats messages and publishes OSD facts.
   The loop yields on TCP read.

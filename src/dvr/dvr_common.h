@@ -65,9 +65,9 @@ enum class RecordingMode {
     VideoWithOsdWriteback  // DRM writeback - encode the composited display output (video+OSD)
 };
 
-// The single cross-thread DVR state. Written by the DVR thread (start/stop/fail), the mavlink
-// thread (stop_recording) and main (shutdown); read by the decode and display threads to decide
-// whether to feed frames. Disabled is a latch: an unrecoverable failure sets it and nothing clears
+// The single cross-thread DVR state. Written by the DVR thread (start/stop/fail), main (shutdown);
+// read by the decode and display threads to decide whether to feed frames.
+// Disabled is a latch: an unrecoverable failure sets it and nothing clears
 // it for the rest of the process, so a broken DVR cannot retry in a loop.
 enum class DvrState {
     Idle,       // not recording, but a start request would be honoured
