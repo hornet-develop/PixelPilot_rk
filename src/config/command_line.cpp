@@ -1,18 +1,19 @@
 #include "command_line.hpp"
 #include "config.hpp"
+#include "parser_helpers.hpp"
 
 #include "pixelpilot_config.h"
 
 #include <arpa/inet.h>
-#include <cerrno>
+#include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <filesystem>
 #include <getopt.h>
 #include <limits>
-#include <string_view>
 
 #include <spdlog/spdlog.h>
+
+using namespace parser_helpers;
 
 namespace {
 
@@ -140,53 +141,6 @@ void printHelp() {
 
 void printVersion() {
     std::printf("PixelPilot Rockchip %d.%d\n", APP_VERSION_MAJOR, APP_VERSION_MINOR);
-}
-
-template <typename T> bool parseInteger(const char *text, long min, long max, T &result) {
-    if (!text || *text == '\0') {
-        return false;
-    }
-
-    errno = 0;
-    char *end = nullptr;
-    const long value = std::strtol(text, &end, 10);
-    if (errno == ERANGE || end == text || *end != '\0' || value < min || value > max) {
-        return false;
-    }
-    result = static_cast<T>(value);
-    return true;
-}
-
-bool parseLogLevel(std::string_view value, spdlog::level::level_enum &level) {
-    if (value == "debug") {
-        level = spdlog::level::debug;
-    } else if (value == "info") {
-        level = spdlog::level::info;
-    } else if (value == "warn") {
-        level = spdlog::level::warn;
-    } else if (value == "error") {
-        level = spdlog::level::err;
-    } else {
-        return false;
-    }
-    return true;
-}
-
-bool parseScreenMode(const char *value, SystemConfig &system) {
-    int width = 0;
-    int height = 0;
-    int refresh_rate = 0;
-    int consumed = 0;
-
-    if (std::sscanf(value, "%dx%d@%d%n", &width, &height, &refresh_rate, &consumed) != 3 || value[consumed] != '\0' ||
-        width <= 0 || height <= 0 || refresh_rate <= 0 || width > std::numeric_limits<uint16_t>::max() ||
-        height > std::numeric_limits<uint16_t>::max()) {
-        return false;
-    }
-    system.screen_width = static_cast<uint16_t>(width);
-    system.screen_height = static_cast<uint16_t>(height);
-    system.screen_refresh_rate = static_cast<uint32_t>(refresh_rate);
-    return true;
 }
 
 CommandLineResult invalidArgument(const char *option, const char *value, const char *expected = nullptr) {
