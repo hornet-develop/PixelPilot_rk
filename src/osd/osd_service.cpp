@@ -118,7 +118,8 @@ void OsdService::drainFacts() {
 }
 
 void OsdService::paintBuffer(modeset_buf *buf) {
-    cairo_surface_t *surface = cairo_image_surface_create_for_data(buf->map, CAIRO_FORMAT_ARGB32, buf->width, buf->height, buf->stride);
+    cairo_surface_t *surface =
+        cairo_image_surface_create_for_data(buf->map, CAIRO_FORMAT_ARGB32, buf->width, buf->height, buf->stride);
     cairo_t *cr = cairo_create(surface);
 
     cairo_save(cr);
@@ -149,31 +150,35 @@ void OsdService::run() {
     auto last_display_at = std::chrono::steady_clock::now();
 
     modeset_buf *buf = &params_.out->osd_bufs[params_.out->osd_buf_switch];
-    int ret = modeset_perform_modeset(params_.fd, params_.out, params_.out->osd_request, &params_.out->osd_plane, buf->fb, buf->width,
-                                      buf->height, params_.zpos, false);
+    int ret = modeset_perform_modeset(params_.fd,
+                                      params_.out,
+                                      params_.out->osd_request,
+                                      &params_.out->osd_plane,
+                                      buf->fb,
+                                      buf->width,
+                                      buf->height,
+                                      params_.zpos,
+                                      false);
     assert(ret >= 0);
     while (!stop_.load()) {
-        const auto now = std::chrono::steady_clock::now();
-        const auto elapsed = now - last_display_at;
-        const auto refresh_period = std::chrono::milliseconds(params_.refresh_frequency_ms);
-        auto wait = std::chrono::milliseconds(0);
-        if (params_.enabled) {
-            if (elapsed < refresh_period) {
-                wait = std::chrono::duration_cast<std::chrono::milliseconds>(refresh_period - elapsed);
-            }
-        } else {
-            wait = std::chrono::seconds(1);
-        }
+        const auto refresh_period =
+            params_.enabled ? std::chrono::milliseconds(params_.refresh_frequency_ms) : std::chrono::seconds(1);
+        const auto next_display_at = last_display_at + refresh_period;
+
         std::unique_lock<std::mutex> lock(fact_mutex_);
-        fact_cv_.wait_for(lock, wait, [this] { return stop_.load() || (params_.enabled && !fact_queue_.empty());});
-        if (stop_.load())
+        fact_cv_.wait_until(
+            lock, next_display_at, [this] { return stop_.load() || (params_.enabled && !fact_queue_.empty()); });
+
+        if (stop_.load()) {
             break;
+        }
 
         const bool have_facts = params_.enabled && !fact_queue_.empty();
-
         lock.unlock();
         if (have_facts) {
             drainFacts();
+        }
+        if (std::chrono::steady_clock::now() < next_display_at) {
             continue;
         }
 

@@ -21,7 +21,7 @@ std::vector<Fact> *getBatch(void *batch) {
     return static_cast<std::vector<Fact> *>(batch);
 }
 
-}
+} // namespace
 
 extern "C" {
 
@@ -62,9 +62,7 @@ void osd_add_str_fact(void *batch, const char *name, const osd_tag *tags, int n_
 }
 
 void osd_add_clear_fact(void *batch, const char *name, const osd_tag *tags, int n_tags) {
-    getBatch(batch)->emplace_back(
-        FactMeta(name, makeTags(tags, n_tags))
-    );
+    getBatch(batch)->emplace_back(FactMeta(name, makeTags(tags, n_tags)));
 }
 
 // -----------------------------------------------------------------------------
