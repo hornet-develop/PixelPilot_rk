@@ -71,6 +71,12 @@ int configHandler(void *user, const char *section, const char *name, const char 
             config.system.target_frame_rate = frame_rate;
             return 1;
         }
+        if (key == "stretch_video") {
+            if (!parseBool(val, config.system.stretch_video)) {
+                return invalidConfigValue("system.stretch_video", val, "true|false");
+            }
+            return 1;
+        }
         if (key == "vsync") {
             if (!parseBool(val, config.system.vsync)) {
                 return invalidConfigValue("system.vsync", val, "true|false");

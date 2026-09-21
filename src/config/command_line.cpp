@@ -67,6 +67,8 @@ constexpr char help_text[] =
     "                                Makes DRM choose the highest available resolution at the requested FPS\n"
     "                                For optimal smoothness, use a value equal to or divisible by the video FPS\n"
     "\n"
+    "    --stretch-video           - Stretch video to fill the entire screen, ignoring aspect ratio\n"
+    "\n"
     "    --disable-vsync           - Disable VSYNC commits\n"
     "\n"
     "    --screen-mode-list        - Print the list of supported screen modes and exit\n"
@@ -97,6 +99,7 @@ enum OptionId {
     OPT_OSD_TELEM_LVL,
     OPT_SCREEN_MODE,
     OPT_TARGET_FRAME_RATE,
+    OPT_STRETCH_VIDEO,
     OPT_DISABLE_VSYNC,
     OPT_SCREEN_MODE_LIST,
     OPT_WFB_API_PORT,
@@ -124,6 +127,7 @@ const struct option long_options[] = {
     {"osd-telem-lvl", required_argument, nullptr, OPT_OSD_TELEM_LVL},
     {"screen-mode", required_argument, nullptr, OPT_SCREEN_MODE},
     {"target-frame-rate", required_argument, nullptr, OPT_TARGET_FRAME_RATE},
+    {"stretch-video", no_argument, nullptr, OPT_STRETCH_VIDEO},
     {"disable-vsync", no_argument, nullptr, OPT_DISABLE_VSYNC},
     {"screen-mode-list", no_argument, nullptr, OPT_SCREEN_MODE_LIST},
     {"wfb-api-port", required_argument, nullptr, OPT_WFB_API_PORT},
@@ -292,6 +296,10 @@ CommandLineResult parseCommandLine(int argc, char **argv, Config &config) {
                 config.system.target_frame_rate = frame_rate;
                 break;
             }
+
+            case OPT_STRETCH_VIDEO: // --stretch-video
+                config.system.stretch_video = true;
+                break;
 
             case OPT_DISABLE_VSYNC: // --disable-vsync
                 config.system.vsync = false;

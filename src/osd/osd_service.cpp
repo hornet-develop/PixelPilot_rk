@@ -150,7 +150,7 @@ void OsdService::run() {
 
     modeset_buf *buf = &params_.out->osd_bufs[params_.out->osd_buf_switch];
     int ret = modeset_perform_modeset(params_.fd, params_.out, params_.out->osd_request, &params_.out->osd_plane, buf->fb, buf->width,
-                                      buf->height, params_.zpos);
+                                      buf->height, params_.zpos, false);
     assert(ret >= 0);
     while (!stop_.load()) {
         const auto now = std::chrono::steady_clock::now();

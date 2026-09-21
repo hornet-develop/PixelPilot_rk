@@ -17,8 +17,9 @@ struct SystemConfig {
     uint16_t screen_height = 0;
     uint32_t screen_refresh_rate = 0;
     uint32_t target_frame_rate = 0;
+    bool stretch_video = false;
     bool vsync = true;
-    
+
     uint16_t wfb_port = 8003;
 
     spdlog::level::level_enum log_level = spdlog::level::info;

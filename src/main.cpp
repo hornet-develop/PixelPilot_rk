@@ -89,6 +89,7 @@ int video_zpos = 1;
 
 bool update_osd_video_size = false;
 bool enable_osd = false;
+bool stretch_video = false;
 bool disable_vsync = false;
 pthread_mutex_t osd_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -233,7 +234,7 @@ void init_buffer(MppFrame frame) {
 	ret = mpi.mpi->control(mpi.ctx, MPP_DEC_SET_EXT_BUF_GROUP, mpi.frm_grp);
 	ret = mpi.mpi->control(mpi.ctx, MPP_DEC_SET_INFO_CHANGE_READY, NULL);
 
-	ret = modeset_perform_modeset(drm_fd, output_list, output_list->video_request, &output_list->video_plane, mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, video_zpos);
+	ret = modeset_perform_modeset(drm_fd, output_list, output_list->video_request, &output_list->video_plane, mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, video_zpos, stretch_video);
 	if (ret < 0 && dvr_wb_mode) {
 		spdlog::error("[ DVR ] modeset failed with writeback attached - detaching, DVR disabled");
 		modeset_detach_writeback(drm_fd, output_list);
@@ -241,7 +242,7 @@ void init_buffer(MppFrame frame) {
 		if (dvr != NULL) {
 			dvr->disable("writeback capture unavailable (display preserved)");
 		}
-		ret = modeset_perform_modeset(drm_fd, output_list, output_list->video_request, &output_list->video_plane, mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, video_zpos);
+		ret = modeset_perform_modeset(drm_fd, output_list, output_list->video_request, &output_list->video_plane, mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, video_zpos, stretch_video);
 	}
 	assert(ret >= 0);
 
@@ -709,7 +710,7 @@ static bool setup_writeback()
 		wb_busy[i].store(false);
 	}
 
-	if (modeset_attach_writeback(drm_fd, output_list) != 0) {
+	if (modeset_attach_writeback(drm_fd, output_list, stretch_video) != 0) {
 		spdlog::error("[ DVR ] could not attach the writeback connector to CRTC {} - "
 		              "WYSIWYG recording unavailable", output_list->crtc.id);
 		free_wb_bufs(WB_BUF_COUNT);
@@ -919,6 +920,7 @@ int main(int argc, char **argv)
 	// Legacy runtime globals
 	enable_osd = config.osd.enabled;
 	disable_vsync = !config.system.vsync;
+	stretch_video = config.system.stretch_video;
 
 	spdlog::set_level(config.system.log_level);
 	if (config.system.log_level == spdlog::level::debug) {
