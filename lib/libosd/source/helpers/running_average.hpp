@@ -4,7 +4,6 @@
 #include <chrono>
 #include <deque>
 #include <sys/types.h>
-#include <vector>
 
 struct Stats {
     long min = 0;
@@ -16,32 +15,25 @@ struct Stats {
 
 class RunningAverage {
   public:
-    RunningAverage(uint window_size_ms, uint bucket_size_ms);
+    using Clock = std::chrono::steady_clock;
+    using Timestamp = Clock::time_point;
 
-    void add(long value);
+    explicit RunningAverage(uint window_size_ms);
+
+    void add(long value, Timestamp timestamp);
+    void clear();
 
     double ratePerSecondOverLastMs(uint last_ms) const;
     Stats statsOverLastMs(uint last_ms) const;
 
-    std::vector<Stats> bucketStats() const;
-
   private:
-    using Clock = std::chrono::steady_clock;
-
-    struct Bucket {
-        Clock::time_point timestamp;
-        long sum;
-        uint count;
-        long min;
-        long max;
-
-        Bucket(Clock::time_point time, long value) : timestamp(time), sum(value), count(1), min(value), max(value) {}
+    struct Sample {
+        Timestamp timestamp;
+        long value;
     };
 
     const std::chrono::milliseconds window_size_;
-    const std::chrono::milliseconds bucket_size_;
-
-    std::deque<Bucket> buckets_;
+    std::deque<Sample> samples_;
 };
 
 #endif

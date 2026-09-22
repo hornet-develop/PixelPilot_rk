@@ -1,6 +1,7 @@
 #ifndef FACT_HPP
 #define FACT_HPP
 
+#include <chrono>
 #include <map>
 #include <string>
 #include <sys/types.h>
@@ -39,6 +40,9 @@ class FactMeta {
 
 class Fact {
   public:
+    using Clock = std::chrono::steady_clock;
+    using Timestamp = Clock::time_point;
+
     enum Type { T_UNDEF, T_BOOL, T_INT, T_UINT, T_DOUBLE, T_STRING };
 
     Fact() = default;
@@ -50,6 +54,10 @@ class Fact {
     Fact(FactMeta meta, std::string value) : meta_(std::move(meta)), value_(std::move(value)) {}
 
     Fact(FactMeta meta, const char *val) = delete;
+
+    Timestamp getTimestamp() const {
+        return timestamp_;
+    }
 
     bool isDefined() const {
         return !std::holds_alternative<std::monostate>(value_);
@@ -88,6 +96,7 @@ class Fact {
 
     FactMeta meta_;
     Value value_;
+    Timestamp timestamp_{Clock::now()};
 };
 
 #endif

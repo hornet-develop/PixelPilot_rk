@@ -11,8 +11,7 @@
       "icon_path": "framerate.png",
       "template": "%u fps | %ux%u",
       "per_second_window_s": 2,
-      "per_second_bucket_ms": 200,
-      "refresh_rate_ms": 250,
+      "refresh_rate_ms": 500,
       "facts": [
         { "name": "video.displayed_frame" },
         { "name": "video.width" },
@@ -28,8 +27,7 @@
       "icon_path": "network.png",
       "template": "%f Mbps",
       "per_second_window_s": 2,
-      "per_second_bucket_ms": 100,
-      "refresh_rate_ms": 250,
+      "refresh_rate_ms": 500,
       "facts": [
         { "name": "rtp.received_bytes" }
       ]

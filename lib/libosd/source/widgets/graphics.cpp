@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iomanip>
+#include <iterator>
 #include <sstream>
 
 #include <fcntl.h>
@@ -69,8 +70,16 @@ void BoxWidget::draw(cairo_t *cr) {
 
 BarChartWidget::BarChartWidget(int pos_x, int pos_y, uint width, uint height, uint window_s, uint num_buckets,
                                StatsField stats_field)
-    : Widget(pos_x, pos_y, 1), width_(width), height_(height), stats_field_(stats_field),
-      stats_(window_s * 1000, window_s * 1000 / num_buckets), max_label_(0, 0, ""), min_label_(0, 0, "") {
+    : Widget(pos_x, pos_y, 1), width_(width), height_(height), stats_field_(stats_field), window_(window_s * 1000),
+      max_label_(0, 0, ""), min_label_(0, 0, "") {
+    assert(window_s > 0);
+    assert(num_buckets > 0);
+
+    const uint bucket_size_ms = window_s * 1000 / num_buckets;
+    assert(bucket_size_ms > 0);
+
+    bucket_size_ = std::chrono::milliseconds(bucket_size_ms);
+
     setSize(width_, height_);
 }
 
@@ -83,19 +92,22 @@ void BarChartWidget::draw(cairo_t *cr) {
     constexpr int BAR_PADDING = 4;
     constexpr int CHART_PADDING = 10;
 
+    removeExpiredBuckets(Clock::now());
+
     auto [x, y] = xy(cr);
     // box
     cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.4);
     cairo_rectangle(cr, x, y, width_, height_);
     cairo_fill(cr);
 
-    auto all_stats = stats_.bucketStats();
-    if (all_stats.size() < 3) {
+    if (buckets_.size() < 3) {
         SPDLOG_DEBUG("Can't draw bar chart - too few values");
         return;
     }
-    all_stats.pop_back(); // drop last bucket, because it is usually still not full
-    const auto stats = selectStats(all_stats);
+    const auto stats = selectStats();
+    if (stats.empty()) {
+        return;
+    }
 
     const auto [min_it, max_it] = std::minmax_element(stats.begin(), stats.end());
     const double min = *min_it;
@@ -150,40 +162,64 @@ void BarChartWidget::setFact(uint idx, Fact fact) {
     }
     switch (fact.getType()) {
         case Fact::T_INT:
-            stats_.add(fact.getIntValue());
+            addValue(fact.getIntValue(), fact.getTimestamp());
             break;
         case Fact::T_UINT:
-            stats_.add(static_cast<long>(fact.getUintValue()));
+            addValue(static_cast<long>(fact.getUintValue()), fact.getTimestamp());
             break;
         default:
             break;
     }
 }
 
-std::vector<double> BarChartWidget::selectStats(const std::vector<Stats> &stats) const {
+void BarChartWidget::addValue(long value, Clock::time_point timestamp) {
+    removeExpiredBuckets(timestamp);
+    if (buckets_.empty() || timestamp - buckets_.back().timestamp >= bucket_size_) {
+        buckets_.emplace_back(timestamp, value);
+        return;
+    }
+
+    auto &bucket = buckets_.back();
+    bucket.sum += value;
+    ++bucket.count;
+    bucket.min = std::min(bucket.min, value);
+    bucket.max = std::max(bucket.max, value);
+}
+
+void BarChartWidget::removeExpiredBuckets(Clock::time_point now) {
+    while (!buckets_.empty() && now - buckets_.front().timestamp > window_) {
+        buckets_.pop_front();
+    }
+}
+
+double BarChartWidget::selectStat(const Bucket &bucket) const {
+    switch (stats_field_) {
+        case STATS_MIN:
+            return static_cast<double>(bucket.min);
+        case STATS_MAX:
+            return static_cast<double>(bucket.max);
+        case STATS_SUM:
+            return static_cast<double>(bucket.sum);
+        case STATS_COUNT:
+            return static_cast<double>(bucket.count);
+        case STATS_AVG:
+            return static_cast<double>(bucket.sum) / bucket.count;
+        default:
+            spdlog::warn("BarChartWidget: invalid stats field");
+            assert(false && "Invalid BarChartWidget stats field");
+            return 0.0;
+    }
+}
+
+std::vector<double> BarChartWidget::selectStats() const {
     std::vector<double> result;
-    result.reserve(stats.size());
-    for (const auto &stat : stats) {
-        switch (stats_field_) {
-            case STATS_MIN:
-                result.push_back(static_cast<double>(stat.min));
-                break;
-            case STATS_MAX:
-                result.push_back(static_cast<double>(stat.max));
-                break;
-            case STATS_SUM:
-                result.push_back(static_cast<double>(stat.sum));
-                break;
-            case STATS_COUNT:
-                result.push_back(static_cast<double>(stat.count));
-                break;
-            case STATS_AVG:
-                result.push_back(stat.average);
-                break;
-            default:
-                spdlog::warn("BarChartWidget: invalid stats field");
-                assert(false && "Invalid BarChartWidget stats field");
-        }
+    if (buckets_.size() < 2) {
+        return result;
+    }
+
+    result.reserve(buckets_.size() - 1);
+    for (auto it = buckets_.begin(); std::next(it) != buckets_.end(); ++it) {
+        result.push_back(selectStat(*it));
     }
     return result;
 }

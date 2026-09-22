@@ -3,27 +3,20 @@
 #include <algorithm>
 #include <cassert>
 
-RunningAverage::RunningAverage(uint window_size_ms, uint bucket_size_ms)
-    : window_size_(window_size_ms), bucket_size_(bucket_size_ms) {
+RunningAverage::RunningAverage(uint window_size_ms) : window_size_(window_size_ms) {
     assert(window_size_ms > 0);
-    assert(bucket_size_ms > 0);
-    assert(window_size_ms >= bucket_size_ms);
 }
 
-void RunningAverage::add(long value) {
-    const auto now = Clock::now();
-    while (!buckets_.empty() && now - buckets_.front().timestamp > window_size_) {
-        buckets_.pop_front();
+void RunningAverage::add(long value, Clock::time_point timestamp) {
+    samples_.push_back({timestamp, value});
+    const auto cutoff = timestamp - window_size_;
+    while (!samples_.empty() && samples_.front().timestamp < cutoff) {
+        samples_.pop_front();
     }
-    if (!buckets_.empty() && now - buckets_.back().timestamp < bucket_size_) {
-        auto &bucket = buckets_.back();
-        bucket.sum += value;
-        ++bucket.count;
-        bucket.min = std::min(bucket.min, value);
-        bucket.max = std::max(bucket.max, value);
-    } else {
-        buckets_.emplace_back(now, value);
-    }
+}
+
+void RunningAverage::clear() {
+    samples_.clear();
 }
 
 Stats RunningAverage::statsOverLastMs(uint last_ms) const {
@@ -31,21 +24,22 @@ Stats RunningAverage::statsOverLastMs(uint last_ms) const {
     assert(window <= window_size_);
 
     const auto now = Clock::now();
+    const auto cutoff = now - window;
 
     Stats stats;
-    for (auto it = buckets_.rbegin(); it != buckets_.rend(); ++it) {
-        if (now - it->timestamp > window) {
+    for (auto it = samples_.rbegin(); it != samples_.rend(); ++it) {
+        if (it->timestamp < cutoff) {
             break;
         }
         if (stats.count == 0) {
-            stats.min = it->min;
-            stats.max = it->max;
+            stats.min = it->value;
+            stats.max = it->value;
         } else {
-            stats.min = std::min(stats.min, it->min);
-            stats.max = std::max(stats.max, it->max);
+            stats.min = std::min(stats.min, it->value);
+            stats.max = std::max(stats.max, it->value);
         }
-        stats.sum += it->sum;
-        stats.count += it->count;
+        stats.sum += it->value;
+        ++stats.count;
     }
     if (stats.count > 0) {
         stats.average = static_cast<double>(stats.sum) / stats.count;
@@ -60,24 +54,4 @@ double RunningAverage::ratePerSecondOverLastMs(uint last_ms) const {
     const Stats stats = statsOverLastMs(last_ms);
     const double seconds = static_cast<double>(last_ms) / 1000.0;
     return static_cast<double>(stats.sum) / seconds;
-}
-
-std::vector<Stats> RunningAverage::bucketStats() const {
-    const auto now = Clock::now();
-
-    std::vector<Stats> result;
-    result.reserve(buckets_.size());
-    for (const auto &bucket : buckets_) {
-        if (now - bucket.timestamp > window_size_) {
-            continue;
-        }
-        result.push_back(Stats{
-            bucket.min,
-            bucket.max,
-            static_cast<double>(bucket.sum) / bucket.count,
-            bucket.sum,
-            bucket.count,
-        });
-    }
-    return result;
 }

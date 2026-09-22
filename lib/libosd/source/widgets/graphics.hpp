@@ -2,11 +2,12 @@
 #define OSD_WIDGETS_GRAPHICS_HPP
 
 #include "base.hpp"
-#include "helpers/running_average.hpp"
 #include "text.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <utility>
 #include <vector>
@@ -38,13 +39,32 @@ class BarChartWidget : public Widget {
     void setFact(uint idx, Fact fact) override;
 
   private:
-    std::vector<double> selectStats(const std::vector<Stats> &stats) const;
+    using Clock = std::chrono::steady_clock;
+
+    struct Bucket {
+        Clock::time_point timestamp;
+        long sum;
+        uint count;
+        long min;
+        long max;
+
+        Bucket(Clock::time_point time, long value) : timestamp(time), sum(value), count(1), min(value), max(value) {}
+    };
+
+    void addValue(long value, Clock::time_point timestamp);
+    void removeExpiredBuckets(Clock::time_point now);
+
+    double selectStat(const Bucket &bucket) const;
+    std::vector<double> selectStats() const;
 
     uint width_;
     uint height_;
 
     StatsField stats_field_;
-    RunningAverage stats_;
+
+    std::chrono::milliseconds window_;
+    std::chrono::milliseconds bucket_size_;
+    std::deque<Bucket> buckets_;
 
     TextWidget max_label_;
     TextWidget min_label_;

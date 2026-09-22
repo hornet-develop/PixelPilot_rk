@@ -213,49 +213,43 @@ bool OsdConfigLoader::loadWidget(const Json &widget, WidgetCommon params) {
         const auto tpl = widget.at("template").get<std::string>();
         const auto icon_path = widget.at("icon_path").get<std::string>();
         const uint window_size_ms = widget.at("per_second_window_s").get<uint>() * 1000;
-        const uint bucket_size_ms = widget.at("per_second_bucket_ms").get<uint>();
         const uint refresh_rate_ms = widget.value("refresh_rate_ms", refresh_frequency_ms);
         cairo_surface_t *icon = openIcon(name, assets_dir_, icon_path);
         if (!icon) {
             return false;
         }
-        return osd_.addWidget(
-            std::move(params.id),
-            std::make_unique<VideoWidget>(
-                x, y, window_size_ms, bucket_size_ms, icon, tpl, refresh_rate_ms, num_args, refresh_frequency_ms),
-            std::move(params.matchers));
+        return osd_.addWidget(std::move(params.id),
+                              std::make_unique<VideoWidget>(
+                                  x, y, window_size_ms, icon, tpl, refresh_rate_ms, num_args, refresh_frequency_ms),
+                              std::move(params.matchers));
     }
     if (type == "VideoBitrateWidget") {
         const auto tpl = widget.at("template").get<std::string>();
         const auto icon_path = widget.at("icon_path").get<std::string>();
         const uint window_size_ms = widget.at("per_second_window_s").get<uint>() * 1000;
-        const uint bucket_size_ms = widget.at("per_second_bucket_ms").get<uint>();
         const uint refresh_rate_ms = widget.value("refresh_rate_ms", refresh_frequency_ms);
         cairo_surface_t *icon = openIcon(name, assets_dir_, icon_path);
         if (!icon) {
             return false;
         }
-        return osd_.addWidget(
-            std::move(params.id),
-            std::make_unique<VideoBitrateWidget>(
-                x, y, window_size_ms, bucket_size_ms, icon, tpl, refresh_rate_ms, num_args, refresh_frequency_ms),
-            std::move(params.matchers));
+        return osd_.addWidget(std::move(params.id),
+                              std::make_unique<VideoBitrateWidget>(
+                                  x, y, window_size_ms, icon, tpl, refresh_rate_ms, num_args, refresh_frequency_ms),
+                              std::move(params.matchers));
     }
     if (type == "VideoDecodeLatencyWidget") {
         const auto tpl = widget.at("template").get<std::string>();
         const auto icon_path = widget.at("icon_path").get<std::string>();
         const uint window_size_ms = widget.at("per_second_window_s").get<uint>() * 1000;
-        const uint bucket_size_ms = widget.at("per_second_bucket_ms").get<uint>();
         const uint refresh_rate_ms = widget.value("refresh_rate_ms", refresh_frequency_ms);
         cairo_surface_t *icon = openIcon(name, assets_dir_, icon_path);
         if (!icon) {
             return false;
         }
-        return osd_.addWidget(
-            std::move(params.id),
-            std::make_unique<VideoDecodeLatencyWidget>(
-                x, y, window_size_ms, bucket_size_ms, icon, tpl, refresh_rate_ms, num_args, refresh_frequency_ms),
-            std::move(params.matchers));
+        return osd_.addWidget(std::move(params.id),
+                              std::make_unique<VideoDecodeLatencyWidget>(
+                                  x, y, window_size_ms, icon, tpl, refresh_rate_ms, num_args, refresh_frequency_ms),
+                              std::move(params.matchers));
     }
 
     // -------------------------------------------------------------------------
