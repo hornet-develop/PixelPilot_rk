@@ -4,7 +4,6 @@
 #include <cassert>
 #include <chrono>
 #include <cmath>
-#include <cstdio>
 #include <ctime>
 #include <sstream>
 
@@ -47,78 +46,6 @@ void TimeWidget::updateTime() {
         return;
     }
     setText(buffer);
-}
-
-// -----------------------------------------------------------------------------
-// GPSWidget
-// -----------------------------------------------------------------------------
-
-GPSWidget::GPSWidget(int pos_x, int pos_y, uint num_args) : TextWidget(pos_x, pos_y, "", num_args) {
-    assert(num_args == 3);
-}
-
-void GPSWidget::measure(cairo_t *cr) {
-    if (!isReady()) {
-        setSize(0, 0);
-        return;
-    }
-    setText(formatText());
-    TextWidget::measure(cr);
-}
-
-void GPSWidget::draw(cairo_t *cr) {
-    if (!isReady())
-        return;
-    auto [x, y] = xy(cr);
-    drawAt(cr, x + TEXT_OFFSET_X, y);
-}
-
-bool GPSWidget::isReady() const {
-    const Fact &fix = fact(0);
-    const Fact &lat = fact(1);
-    const Fact &lon = fact(2);
-    return fix.isDefined() && lat.isDefined() && lon.isDefined();
-}
-
-std::string GPSWidget::formatText() const {
-    const Fact &fix_fact = fact(0);
-    const Fact &lat_fact = fact(1);
-    const Fact &lon_fact = fact(2);
-    std::string fix_type = "undef";
-    char buf[64];
-    switch (fix_fact.getUintValue()) {
-        case 0:
-            fix_type = "no GPS";
-            break;
-        case 1:
-            fix_type = "no fix";
-            break;
-        case 2:
-            fix_type = "2D fix";
-            break;
-        case 3:
-            fix_type = "3D fix";
-            break;
-        case 4:
-            fix_type = "DGPS/SBAS 3D";
-            break;
-        case 5:
-            fix_type = "RTK float 3D";
-            break;
-        case 6:
-            fix_type = "RTK Fixed 3D";
-            break;
-        case 7:
-            fix_type = "Static fixed";
-            break;
-        case 8:
-            fix_type = "PPP 3D";
-            break;
-    }
-    const double lat = lat_fact.getIntValue() * 1.0e-7;
-    const double lon = lon_fact.getIntValue() * 1.0e-7;
-    std::snprintf(buf, sizeof(buf), "%s Lat:%.7f, Lon:%.7f", fix_type.c_str(), lat, lon);
-    return buf;
 }
 
 // -----------------------------------------------------------------------------

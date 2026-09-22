@@ -24,21 +24,6 @@ class TimeWidget : public TextWidget {
     std::chrono::steady_clock::time_point last_update_{};
 };
 
-class GPSWidget : public TextWidget {
-  public:
-    GPSWidget(int pos_x, int pos_y, uint num_args);
-
-    void measure(cairo_t *cr) override;
-    void draw(cairo_t *cr) override;
-
-  private:
-    bool isReady() const;
-
-    std::string formatText() const;
-
-    static constexpr int TEXT_OFFSET_X = 40;
-};
-
 class DebugWidget : public Widget {
   public:
     DebugWidget(int pos_x, int pos_y, uint num_args) : Widget(pos_x, pos_y, num_args), lines_(num_args, "undef") {}

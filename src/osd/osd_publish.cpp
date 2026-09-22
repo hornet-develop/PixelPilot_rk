@@ -10,6 +10,9 @@
 namespace {
 
 FactTags makeTags(const osd_tag *tags, int n_tags) {
+    if (!tags && n_tags > 0) {
+        return {};
+    }
     FactTags fact_tags;
     for (int i = 0; i < n_tags; ++i) {
         fact_tags.emplace(tags[i].key, tags[i].val);
@@ -35,10 +38,15 @@ void *osd_batch_init(unsigned int n) {
     return batch;
 }
 
-void osd_publish_batch(void *batch) {
-    auto *facts = getBatch(batch);
+void osd_publish_batch(void **batch) {
+    if (!batch || !*batch)
+        return;
+
+    auto *facts = getBatch(*batch);
     OsdService::publishFacts(std::move(*facts));
+
     delete facts;
+    *batch = nullptr;
 }
 
 void osd_add_bool_fact(void *batch, const char *name, const osd_tag *tags, int n_tags, bool value) {

@@ -4,14 +4,9 @@ extern "C" {
 #include "../drm.h"
 }
 
-#include <algorithm>
 #include <cassert>
 #include <chrono>
-#include <cstdio>
-#include <cstring>
 #include <utility>
-
-#include <unistd.h>
 
 #include <cairo.h>
 #include <spdlog/spdlog.h>
@@ -43,11 +38,40 @@ bool OsdService::start(OsdServiceParams params) {
     }
 
     instance_ = std::unique_ptr<OsdService>(new OsdService(std::move(params)));
-    const int ret = pthread_create(&instance_->thread_, nullptr, &OsdService::threadEntry, instance_.get());
+    if (!instance_->init()) {
+        instance_.reset();
+        return false;
+    }
 
+    const int ret = pthread_create(&instance_->thread_, nullptr, &OsdService::threadEntry, instance_.get());
     if (ret != 0) {
         spdlog::error("Failed to start OSD thread: {}", ret);
         instance_.reset();
+        return false;
+    }
+    return true;
+}
+
+bool OsdService::init() {
+    if (params_.screensaver_enabled) {
+        osd_.loadScreensaverImage(params_.screensaver_image);
+    }
+    if (params_.enabled && !params_.config_path.empty()) {
+        osd_.loadConfig(params_.config_path);
+    }
+
+    modeset_buf *buf = &params_.out->osd_bufs[params_.out->osd_buf_switch];
+    const int ret = modeset_perform_modeset(params_.fd,
+                                            params_.out,
+                                            params_.out->osd_request,
+                                            &params_.out->osd_plane,
+                                            buf->fb,
+                                            buf->width,
+                                            buf->height,
+                                            params_.zpos,
+                                            false);
+    if (ret < 0) {
+        spdlog::error("Failed to initialize OSD plane");
         return false;
     }
     return true;
@@ -63,6 +87,7 @@ void OsdService::stop() {
     const int ret = pthread_join(instance_->thread_, nullptr);
     if (ret != 0) {
         spdlog::error("Failed to join OSD thread: {}", ret);
+        return;
     }
     instance_.reset();
 }
@@ -127,39 +152,47 @@ void OsdService::paintBuffer(modeset_buf *buf) {
     cairo_paint(cr);
     cairo_restore(cr);
 
-    if (!video_present.load())
+    if (params_.screensaver_enabled && !video_present.load()) {
         osd_.drawScreensaver(cr);
+    }
 
-    if (params_.enabled)
+    if (params_.enabled) {
         osd_.draw(cr);
+    }
 
     cairo_destroy(cr);
     cairo_surface_destroy(surface);
 }
 
+void OsdService::refresh() {
+    const int buf_idx = params_.out->osd_buf_switch ^ 1;
+    modeset_buf *buf = &params_.out->osd_bufs[buf_idx];
+
+    paintBuffer(buf);
+
+    int ret = pthread_mutex_lock(&osd_mutex);
+    assert(!ret);
+
+    params_.out->osd_buf_switch = buf_idx;
+    ret = pthread_mutex_unlock(&osd_mutex);
+    assert(!ret);
+
+    ret = pthread_mutex_lock(&video_mutex);
+    assert(!ret);
+
+    osd_update_ready = true;
+    ret = pthread_cond_signal(&video_cond);
+    assert(!ret);
+
+    ret = pthread_mutex_unlock(&video_mutex);
+    assert(!ret);
+}
+
 void OsdService::run() {
     pthread_setname_np(pthread_self(), "__OSD");
 
-    if (!params_.screensaver_image.empty()) {
-        osd_.loadScreensaverImage(params_.screensaver_image);
-    }
-    if (params_.enabled && !params_.config_path.empty()) {
-        osd_.loadConfig(params_.config_path);
-    }
-
     auto last_display_at = std::chrono::steady_clock::now();
 
-    modeset_buf *buf = &params_.out->osd_bufs[params_.out->osd_buf_switch];
-    int ret = modeset_perform_modeset(params_.fd,
-                                      params_.out,
-                                      params_.out->osd_request,
-                                      &params_.out->osd_plane,
-                                      buf->fb,
-                                      buf->width,
-                                      buf->height,
-                                      params_.zpos,
-                                      false);
-    assert(ret >= 0);
     while (!stop_.load()) {
         const auto refresh_period =
             params_.enabled ? std::chrono::milliseconds(params_.refresh_frequency_ms) : std::chrono::seconds(1);
@@ -184,28 +217,7 @@ void OsdService::run() {
 
         SPDLOG_DEBUG("refresh OSD");
 
-        const int buf_idx = params_.out->osd_buf_switch ^ 1;
-        buf = &params_.out->osd_bufs[buf_idx];
-
-        paintBuffer(buf);
-
-        ret = pthread_mutex_lock(&osd_mutex);
-        assert(!ret);
-
-        params_.out->osd_buf_switch = buf_idx;
-        ret = pthread_mutex_unlock(&osd_mutex);
-        assert(!ret);
-
-        ret = pthread_mutex_lock(&video_mutex);
-        assert(!ret);
-
-        osd_update_ready = true;
-        ret = pthread_cond_signal(&video_cond);
-        assert(!ret);
-
-        ret = pthread_mutex_unlock(&video_mutex);
-        assert(!ret);
-
+        refresh();
         last_display_at = std::chrono::steady_clock::now();
     }
     spdlog::info("OSD thread done.");

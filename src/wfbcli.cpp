@@ -123,7 +123,7 @@ void clear_wfbcli_rx_link_facts(const char *id)
         osd_add_clear_fact(batch, "wfbcli.rx.ant_stats.snr_avg",  tags, n_tags);
         osd_add_clear_fact(batch, "wfbcli.rx.ant_stats.snr_max",  tags, n_tags);
     }
-    osd_publish_batch(batch);
+    osd_publish_batch(&batch);
 }
 
 static void clear_wfbcli_tx_link_facts(const char *id)
@@ -169,7 +169,7 @@ static void clear_wfbcli_tx_link_facts(const char *id)
         snprintf(tags[1].val, sizeof(tags[1].val), "%" PRIu64, ant_id);
         osd_add_clear_fact(batch, "wfbcli.rf_temperature", tags, n_tags);
     }
-    osd_publish_batch(batch);
+    osd_publish_batch(&batch);
 }
 
 
@@ -181,7 +181,7 @@ void clear_wfbcli_cli_header_facts()
     osd_add_clear_fact(batch, "wfbcli.is_cluster", nullptr, 0);
     osd_add_clear_fact(batch, "wfbcli.temp_overheat_warning", nullptr, 0);
 
-    osd_publish_batch(batch);
+    osd_publish_batch(&batch);
 }
 
 void clear_osd_wfbcli()
@@ -329,7 +329,7 @@ int process_rx(const msgpack::object& packet) {
         osd_add_bool_fact(batch, "wfbcli.drone.connected", tags, 1, false);
     }
 
-    osd_publish_batch(batch);
+    osd_publish_batch(&batch);
     return 0;
 }
 
@@ -419,7 +419,7 @@ int process_tx(const msgpack::object& packet) {
 		osd_add_uint_fact(batch, "wfbcli.rf_temperature", tags, 2, temperature);
     }	
 
-    osd_publish_batch(batch);
+    osd_publish_batch(&batch);
 
     return 0;
 }
@@ -445,7 +445,7 @@ int process_title(const msgpack::object& packet) {
     osd_add_str_fact(batch, "wfbcli.cli_title", nullptr, 0, cli_title.c_str());
     osd_add_bool_fact(batch, "wfbcli.is_cluster", nullptr, 0, is_cluster);
     osd_add_uint_fact(batch, "wfbcli.temp_overheat_warning", nullptr, 0, temp_overheat_warning);
-    osd_publish_batch(batch);
+    osd_publish_batch(&batch);
     return 0;
 }
 
@@ -560,7 +560,7 @@ void *__WFB_CLI_THREAD__(void *param) {
         void *batch = osd_batch_init(2);
         osd_add_bool_fact(batch, "wfbcli.cli.connected", NULL, 0, false);
         osd_add_bool_fact(batch, "wfbcli.drone.connected", NULL, 0, false);
-        osd_publish_batch(batch);
+        osd_publish_batch(&batch);
 		int sock = reconnect_to_server(p->port);
 		handle_server_connection(sock);
 		// If we return from handle_server_connection, the server is disconnected

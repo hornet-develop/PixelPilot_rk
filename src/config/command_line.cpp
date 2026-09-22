@@ -321,6 +321,7 @@ CommandLineResult parseCommandLine(int argc, char **argv, Config &config) {
                     return invalidArgument("--screensaver-image", optarg, "existing file");
                 }
                 config.system.screensaver_image = image_path.string();
+                config.system.screensaver_enabled = true;
                 break;
             }
 

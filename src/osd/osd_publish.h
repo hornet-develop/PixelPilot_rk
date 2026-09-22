@@ -16,7 +16,7 @@ extern "C" {
 // Batch functions are when you publish several facts from the same place
 // It has optimized publishing algorithm - takes the lock only once per-batch
 void *osd_batch_init(unsigned int n);
-void osd_publish_batch(void *batch);
+void osd_publish_batch(void **batch);
 void osd_add_bool_fact(void *batch, const char *name, const osd_tag *tags, int n_tags, bool value);
 void osd_add_int_fact(void *batch, const char *name, const osd_tag *tags, int n_tags, long value);
 void osd_add_uint_fact(void *batch, const char *name, const osd_tag *tags, int n_tags, unsigned long value);

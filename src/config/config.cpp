@@ -58,7 +58,7 @@ int configHandler(void *user, const char *section, const char *name, const char 
             return 1;
         }
         if (key == "screen_mode") {
-            if (!val.empty() && !parseScreenMode(value, config.system)) {
+            if (!parseScreenMode(value, config.system)) {
                 return invalidConfigValue("system.screen_mode", val, "<width>x<height>@<refresh>");
             }
             return 1;
@@ -86,6 +86,12 @@ int configHandler(void *user, const char *section, const char *name, const char 
         if (key == "wfb_port") {
             if (!parseInteger(value, 0, std::numeric_limits<uint16_t>::max(), config.system.wfb_port)) {
                 return invalidConfigValue("system.wfb_port", val, "0..65535");
+            }
+            return 1;
+        }
+        if (key == "screensaver_enabled") {
+            if (!parseBool(val, config.system.screensaver_enabled)) {
+                return invalidConfigValue("system.screensaver_enabled", val, "true|false");
             }
             return 1;
         }
@@ -184,6 +190,10 @@ bool loadConfigFile(const std::filesystem::path &path, Config &config) {
     }
     if (result > 0) {
         spdlog::error("Failed to parse config file '{}' at line {}", path.string(), result);
+        return false;
+    }
+    if (config.system.screensaver_enabled && config.system.screensaver_image.empty()) {
+        spdlog::error("Screensaver is enabled but no image is configured");
         return false;
     }
     return true;

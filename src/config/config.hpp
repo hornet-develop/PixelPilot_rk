@@ -21,8 +21,9 @@ struct SystemConfig {
     bool vsync = true;
 
     uint16_t wfb_port = 8003;
-
     spdlog::level::level_enum log_level = spdlog::level::info;
+
+    bool screensaver_enabled = false;
     std::string screensaver_image;
 };
 

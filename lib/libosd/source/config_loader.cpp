@@ -316,10 +316,6 @@ bool OsdConfigLoader::loadWidget(const Json &widget, WidgetCommon params) {
     // Info widgets
     // -------------------------------------------------------------------------
 
-    if (type == "GPSWidget") {
-        return osd_.addWidget(
-            std::move(params.id), std::make_unique<GPSWidget>(x, y, num_args), std::move(params.matchers));
-    }
     if (type == "TimeWidget") {
         return osd_.addWidget(
             std::move(params.id), std::make_unique<TimeWidget>(x, y, num_args), std::move(params.matchers));

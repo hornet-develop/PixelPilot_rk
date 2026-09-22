@@ -267,7 +267,7 @@ void clear_video_runtime_facts()
     osd_add_clear_fact(batch, "video.decode_and_handover_ms", nullptr, 0);
     osd_add_clear_fact(batch, "video.decoder_feed_time_ms", nullptr, 0);
 
-    osd_publish_batch(batch);
+    osd_publish_batch(&batch);
 }
 
 // __FRAME_THREAD__
@@ -973,6 +973,21 @@ int main(int argc, char **argv)
 			dvr_requested = false;
 		}
 	}
+
+	OsdServiceParams params;
+	params.out = output_list;
+	params.fd = drm_fd;
+	params.config_path = config.osd.config_path;
+	params.screensaver_enabled = config.system.screensaver_enabled;
+	params.screensaver_image = config.system.screensaver_image;
+	params.refresh_frequency_ms = config.osd.refresh_ms;
+	params.enabled = config.osd.enabled;
+	params.widget_enabled = config.osd.widget_enabled;
+
+	// OSD service lifetime must cover all threads that publish OSD facts.
+	bool osd_started = OsdService::start(std::move(params));
+	assert(osd_started);
+
 	if (dvr_requested) {
 		dvr_thread_params args;
 		args.filename_template = config.dvr.file_template;
@@ -1008,18 +1023,6 @@ int main(int argc, char **argv)
 	ret = pthread_create(&tid_display, NULL, __DISPLAY_THREAD__, NULL);
 	assert(!ret);
 
-	OsdServiceParams params;
-	params.out = output_list;
-	params.fd = drm_fd;
-	params.config_path = config.osd.config_path;
-	params.screensaver_image = config.system.screensaver_image;
-	params.refresh_frequency_ms = config.osd.refresh_ms;
-	params.enabled = config.osd.enabled;
-	params.widget_enabled = config.osd.widget_enabled;
-
-	bool osd_started = OsdService::start(std::move(params));
-	assert(osd_started);
-
 	bool wfb_thread_started = false;
     if (config.osd.enabled && config.system.wfb_port) {
         wfb_thread_params *wfb_args = (wfb_thread_params *)malloc(sizeof *wfb_args);
@@ -1053,8 +1056,6 @@ int main(int argc, char **argv)
 	ret = pthread_join(tid_frame, NULL);
 	assert(!ret);
 
-	OsdService::stop();
-	
 	ret = pthread_mutex_lock(&video_mutex);
 	assert(!ret);	
 	ret = pthread_cond_signal(&video_cond);
@@ -1064,6 +1065,10 @@ int main(int argc, char **argv)
 
 	ret = pthread_join(tid_display, NULL);
 	assert(!ret);	
+
+	// All OSD fact producers are stopped by this point.
+	// Stop OSD before destroying the video synchronization primitives used by its thread.
+	OsdService::stop();
 	
 	ret = pthread_cond_destroy(&video_cond);
 	assert(!ret);

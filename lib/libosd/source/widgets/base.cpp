@@ -8,16 +8,16 @@ void Widget::setFact(uint idx, Fact fact) {
 
 int Widget::x(cairo_t *cr) const {
     cairo_surface_t *target = cairo_get_target(cr);
-    int width = cairo_image_surface_get_width(target);
+    const int width = cairo_image_surface_get_width(target);
 
-    return (width + position_.x) % width;
+    return position_.x < 0 ? width + position_.x : position_.x;
 }
 
 int Widget::y(cairo_t *cr) const {
     cairo_surface_t *target = cairo_get_target(cr);
-    int height = cairo_image_surface_get_height(target);
+    const int height = cairo_image_surface_get_height(target);
 
-    return (height + position_.y) % height;
+    return position_.y < 0 ? height + position_.y : position_.y;
 }
 
 void Widget::measureChild(Widget &child, cairo_t *cr) {

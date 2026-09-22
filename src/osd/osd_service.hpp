@@ -9,6 +9,7 @@
 #include <pthread.h>
 #include <queue>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <fact.hpp>
@@ -23,6 +24,7 @@ struct OsdServiceParams {
 
     std::string config_path;
     std::string screensaver_image;
+    bool screensaver_enabled = false;
 
     uint32_t refresh_frequency_ms = 1000;
     int zpos = 2;
@@ -49,7 +51,9 @@ class OsdService {
 
     static void *threadEntry(void *arg);
 
+    bool init();
     void run();
+    void refresh();
 
     void enqueueFact(Fact fact);
     void enqueueFacts(std::vector<Fact> facts);

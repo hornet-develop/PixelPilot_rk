@@ -173,8 +173,6 @@ Specific widgets expect quite concrete facts as input:
   Uses `rtp.received_bytes` fact
 * `VideoDecodeLatencyWidget` - shows video frame decode and display latency (avg/min/max).
   Uses `video.decode_and_handover_ms` fact
-* `GPSWidget` - displays GPS fix type (no fix / 2D fix / 3D fix etc) and GPS coordinates.
-  Uses `gps_raw.fix_type`, `gps_raw.lat` and `gps_raw.lon` facts
 
 ## Known issues
 
