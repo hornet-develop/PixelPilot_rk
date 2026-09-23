@@ -6,31 +6,20 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(SOURCE_FILES 
-        src/common.h
-        src/drm.h
         src/drm.c
-        src/osd.h
-        src/osd.hpp
-        src/osd.cpp
-        src/rtp_codec_detector.hpp
+        src/osd/osd_publish.cpp
+        src/osd/osd_service.cpp
         src/rtp_codec_detector.cpp
-        src/rtp_receiver.hpp
         src/rtp_receiver.cpp
-        src/dvr/dvr_common.h
-        src/dvr/mpp_encoder.h
         src/dvr/mpp_encoder.cpp
-        src/dvr/ts_writer.h
         src/dvr/ts_writer.cpp
-        src/dvr/storage_guard.h
         src/dvr/storage_guard.cpp
-        src/dvr/dvr.h
         src/dvr/dvr.cpp
         src/main.cpp
-        src/wfbcli.hpp
         src/wfbcli.cpp
-        src/scheduling_helper.hpp
-        src/socket_handler.hpp
         src/socket_handler.cpp
+        src/config/command_line.cpp
+        src/config/config.cpp
         )
 file(GLOB ICONS src/icons/*.png)
 file(GLOB OSD_CONFIGS *_osd.json)
@@ -41,22 +30,23 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBDRM REQUIRED IMPORTED_TARGET libdrm)
 pkg_check_modules(CAIRO REQUIRED IMPORTED_TARGET cairo)
 pkg_check_modules(SPDLOG REQUIRED IMPORTED_TARGET spdlog)
-pkg_check_modules(NLOHMANN REQUIRED IMPORTED_TARGET nlohmann_json)
 pkg_check_modules(MSGPACK REQUIRED IMPORTED_TARGET msgpack)
 
 include_directories(${PROJECT_NAME}
         ${CMAKE_SOURCE_DIR}/lib/librtp/include
 )
 
+add_subdirectory(${CMAKE_SOURCE_DIR}/lib/inih)
 add_subdirectory(${CMAKE_SOURCE_DIR}/lib/librtp)
+add_subdirectory(${CMAKE_SOURCE_DIR}/lib/libosd)
 
 add_executable(${PROJECT_NAME} ${SOURCE_FILES})
 
-target_link_libraries(${PROJECT_NAME} PRIVATE m rtp
+target_link_libraries(${PROJECT_NAME} PRIVATE 
+        rtp osd inih
         PkgConfig::LIBDRM
         PkgConfig::CAIRO
         PkgConfig::SPDLOG
-        PkgConfig::NLOHMANN
         PkgConfig::MSGPACK
         rockchip_mpp pthread m rt
 )

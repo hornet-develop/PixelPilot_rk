@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <atomic>
+#include <string>
 
 struct video_params {
     uint32_t video_frm_width;
@@ -27,7 +28,7 @@ struct dvr_frame_info {
 };
 
 struct dvr_thread_params {
-    char *filename_template;
+    std::string filename_template;
     bool enable_osd_in_dvr = false;
     int dvr_bitrate = 8000000;
     int dvr_segment_minutes = 0;

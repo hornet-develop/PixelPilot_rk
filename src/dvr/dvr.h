@@ -55,7 +55,7 @@ private:
     std::mutex mtx;
     std::condition_variable cv;
 
-    char *filename_template;
+    std::string filename_template;
     int  dvr_bitrate = 8000000;
     int64_t segment_limit_ms = 0;
     int64_t segment_video_ticks = 0;
