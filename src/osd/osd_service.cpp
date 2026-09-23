@@ -152,7 +152,7 @@ void OsdService::paintBuffer(modeset_buf *buf) {
     cairo_paint(cr);
     cairo_restore(cr);
 
-    if (params_.screensaver_enabled && !video_present.load()) {
+    if (!video_present.load()) {
         osd_.drawScreensaver(cr);
     }
 
