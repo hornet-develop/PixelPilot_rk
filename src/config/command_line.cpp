@@ -28,7 +28,7 @@ constexpr char help_text[] =
     "\n"
     "    -p <port>                 - UDP port for RTP video stream         (Default: 5600)\n"
     "\n"
-    "    --config <file>           - Load PixelPilot configuration from INI file\n"
+    "    --config <file>           - Load PixelPilot configuration from file\n"
     "\n"
     "    --socket <socket>         - read data from socket\n"
     "\n"
