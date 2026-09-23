@@ -515,7 +515,6 @@ void handle_server_connection(int sock) {
 
 int reconnect_to_server(int port) {
 	while (!wfb_thread_signal) {
-		SPDLOG_DEBUG("Attempting to connect to WFB API server...");
 
 		int sock = socket(AF_INET, SOCK_STREAM, 0);
 		if (sock < 0) {
@@ -531,8 +530,6 @@ int reconnect_to_server(int port) {
                     osd_publish_bool_fact("wfbcli.cli.connected", NULL, 0, true);
                     cli_connected = true;
 					return sock;
-				} else {
-					SPDLOG_ERROR("Connection failed");
 				}
 			} else {
 				SPDLOG_ERROR("Invalid address/Address not supported");
@@ -545,8 +542,6 @@ int reconnect_to_server(int port) {
             clear_osd_wfbcli();
             cli_connected = false;
         }
-
-		SPDLOG_WARN("Reconnection failed. Retrying in 1 second");
 		std::this_thread::sleep_for(std::chrono::seconds(1));
 	}
 	return -1;
