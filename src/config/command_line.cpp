@@ -32,10 +32,6 @@ constexpr char help_text[] =
     "\n"
     "    --socket <socket>         - read data from socket\n"
     "\n"
-    "    --codec <codec>           - [ Deprecated ] Video codec, should be the same as on VTX\n"
-    "                                Now codec is detected dynamically during runtime.\n"
-    "                                Passed value <codec> will ignored\n"
-    "\n"
     "    --log-level <level>       - Log verbosity level, debug|info|warn|error (Default: info)\n"
     "\n"
     "    --osd                     - Enable OSD\n"
@@ -82,8 +78,6 @@ constexpr char help_text[] =
 
 enum OptionId {
     OPT_SOCKET = 256,
-    OPT_CODEC,
-    OPT_DVR,
     OPT_DVR_START,
     OPT_DVR_TEMPLATE,
     OPT_DVR_OSD,
@@ -110,8 +104,6 @@ enum OptionId {
 
 const struct option long_options[] = {
     {"socket", required_argument, nullptr, OPT_SOCKET},
-    {"codec", required_argument, nullptr, OPT_CODEC},
-    {"dvr", required_argument, nullptr, OPT_DVR},
     {"dvr-start", no_argument, nullptr, OPT_DVR_START},
     {"dvr-template", required_argument, nullptr, OPT_DVR_TEMPLATE},
     {"dvr-osd", no_argument, nullptr, OPT_DVR_OSD},
@@ -208,16 +200,6 @@ CommandLineResult parseCommandLine(int argc, char **argv, Config &config) {
 
             case OPT_SOCKET: // --socket
                 config.system.socket_path = optarg;
-                break;
-
-            case OPT_CODEC: // --codec (deprecated)
-                spdlog::warn("--codec parameter is removed");
-                break;
-
-            case OPT_DVR: // --dvr (deprecated)
-                config.dvr.file_template = optarg;
-                config.dvr.start = true;
-                spdlog::warn("--dvr is deprecated. Use --dvr-template and --dvr-start");
                 break;
 
             case OPT_DVR_START: // --dvr-start
