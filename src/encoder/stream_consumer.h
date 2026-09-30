@@ -40,10 +40,12 @@ public:
     // The encoder is unrecoverably broken; every consumer loses the stream.
     virtual void on_encoder_failed(const std::string &reason) { (void)reason; }
 
-    // Periodic wake, roughly once a second. `idle` is true when it fired on the encoder's own
-    // timeout rather than alongside real work, which is the cue for housekeeping that should not
-    // be skipped just because frames stopped arriving.
-    virtual void on_tick(bool idle) { (void)idle; }
+    // Called on the encoder thread once per loop iteration - so once per encoded frame while the
+    // stream is running (tens of times a second), plus once per second when idle, and on every
+    // consumer whether or not it is active. It is only a wake-up, carrying no state: a consumer
+    // that wants a periodic job must throttle on its own clock. Same rule as on_access_unit:
+    // must not block.
+    virtual void on_tick() { }
 };
 
 #endif

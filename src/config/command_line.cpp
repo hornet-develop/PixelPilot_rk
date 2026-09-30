@@ -57,6 +57,17 @@ constexpr char help_text[] =
     "\n"
     "    --dvr-require-mount       - Only record if the DVR directory is on a mounted external device\n"
     "\n"
+    "    --video-stream-address <ip>\n"
+    "                              - Send the re-encoded H265 out as an RTP stream to this address.\n"
+    "                                Enables streaming; works with or without recording, and both\n"
+    "                                outputs carry the same video.\n"
+    "\n"
+    "    --video-stream-port <port> - UDP port for the outgoing RTP stream (Default: 5604)\n"
+    "\n"
+    "    --video-stream-socket <path>\n"
+    "                              - Send the RTP stream to this unix datagram socket instead of\n"
+    "                                UDP. A filesystem path the receiver has bound.\n"
+    "\n"
     "    --screen-mode <mode>      - Override default screen mode. <width>x<heigth>@<fps> ex: 1920x1080@120\n"
     "\n"
     "    --target-frame-rate <fps> - Target DRM refresh rate for mode selection (30..120), ex: 60\n"
@@ -85,6 +96,9 @@ enum OptionId {
     OPT_DVR_SEGMENT_TIME,
     OPT_DVR_MIN_FREE_MB,
     OPT_DVR_REQUIRE_MOUNT,
+    OPT_VIDEO_STREAM_ADDRESS,
+    OPT_VIDEO_STREAM_PORT,
+    OPT_VIDEO_STREAM_SOCKET,
     OPT_LOG_LEVEL,
     OPT_OSD,
     OPT_OSD_CONFIG,
@@ -111,6 +125,9 @@ const struct option long_options[] = {
     {"dvr-segment-time", required_argument, nullptr, OPT_DVR_SEGMENT_TIME},
     {"dvr-min-free-mb", required_argument, nullptr, OPT_DVR_MIN_FREE_MB},
     {"dvr-require-mount", no_argument, nullptr, OPT_DVR_REQUIRE_MOUNT},
+    {"video-stream-address", required_argument, nullptr, OPT_VIDEO_STREAM_ADDRESS},
+    {"video-stream-port",   required_argument, nullptr, OPT_VIDEO_STREAM_PORT},
+    {"video-stream-socket", required_argument, nullptr, OPT_VIDEO_STREAM_SOCKET},
     {"log-level", required_argument, nullptr, OPT_LOG_LEVEL},
     {"osd", no_argument, nullptr, OPT_OSD},
     {"osd-config", required_argument, nullptr, OPT_OSD_CONFIG},
@@ -234,6 +251,25 @@ CommandLineResult parseCommandLine(int argc, char **argv, Config &config) {
 
             case OPT_DVR_REQUIRE_MOUNT: // --dvr-require-mount
                 config.dvr.require_mount = true;
+                break;
+
+            case OPT_VIDEO_STREAM_ADDRESS: { // --video-stream-address <ip>
+                struct in_addr address{};
+                if (inet_pton(AF_INET, optarg, &address) != 1) {
+                    return invalidArgument("-a", optarg, "IPv4 address");
+                }
+                config.video_stream.address = optarg;
+                break;
+            }
+
+            case OPT_VIDEO_STREAM_PORT: // --video-stream-port <port>
+                if (!parseInteger(optarg, 1, std::numeric_limits<uint16_t>::max(), config.video_stream.port)) {
+                    return invalidArgument("-p", optarg, "1..65535");
+                }
+                break;
+
+            case OPT_VIDEO_STREAM_SOCKET: // --video-stream-socket <path>
+                config.video_stream.socket_path = optarg;
                 break;
 
             case OPT_LOG_LEVEL: // --log-level

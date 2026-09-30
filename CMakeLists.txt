@@ -11,6 +11,8 @@ set(SOURCE_FILES
         src/osd/osd_service.cpp
         src/rtp_codec_detector.cpp
         src/rtp_receiver.cpp
+        src/video_streamer.hpp
+        src/video_streamer.cpp
         src/dvr/dvr_common.h
         src/encoder/encoder_common.h
         src/encoder/stream_consumer.h

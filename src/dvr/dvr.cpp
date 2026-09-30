@@ -1,4 +1,6 @@
+#include <pthread.h>
 #include <unistd.h>
+#include <chrono>
 #include <cstring>
 #include <cstdlib>
 #include <cerrno>
@@ -44,6 +46,11 @@ static const uint32_t MAX_CONSECUTIVE_WRITE_FAILURES = 5;
 // Failed file opens before we give up on the recording.
 static const int MAX_OPEN_ATTEMPTS = 3;
 
+// Cap on buffered access-unit bytes. Encoded frames are small (~KB), so this absorbs a multi-second
+// SD stall; if exceeded, the SD has been dead far too long - drop and count a failure so the DVR
+// fail-stops rather than growing memory without bound.
+static const size_t MAX_QUEUE_BYTES = 32 * 1024 * 1024;
+
 static int64_t monotonic_ms() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -62,35 +69,17 @@ Dvr::Dvr(VideoEncoder *enc, const std::string &template_path, int segment_minute
 Dvr::~Dvr() {}
 
 void Dvr::start_recording() {
-    encoder->post([this] {
-        if (dvr_is_disabled() || recording_armed.load(std::memory_order_relaxed)) {
-            return;
-        }
-        start();
-    }, false);
+    enqueue_dvr_command({ .command = dvr_rpc::RPC_START }, false);
 }
 
 void Dvr::stop_recording() {
     DvrState expected = DvrState::Recording;
     dvr_state.compare_exchange_strong(expected, DvrState::Idle, std::memory_order_acq_rel);
-    encoder->post([this] {
-        if (recording_armed.load(std::memory_order_relaxed)) {
-            stop();
-        }
-    }, true);
+    enqueue_dvr_command({ .command = dvr_rpc::RPC_STOP }, true);
 }
 
 void Dvr::toggle_recording() {
-    encoder->post([this] {
-        if (dvr_is_disabled()) {
-            return;
-        }
-        if (recording_armed.load(std::memory_order_relaxed)) {
-            stop();
-        } else {
-            start();
-        }
-    }, false);
+    enqueue_dvr_command({ .command = dvr_rpc::RPC_TOGGLE }, false);
 }
 
 void Dvr::disable(const std::string &reason) {
@@ -99,30 +88,173 @@ void Dvr::disable(const std::string &reason) {
         return;
     }
     spdlog::error("[ DVR ] disabling DVR for this session: {}", reason);
-    encoder->post([this] {
-        if (recording_armed.load(std::memory_order_relaxed)) {
-            stop();
-        }
-        osd_publish_bool_fact("dvr.recording", NULL, 0, false);
-    }, true);
+    enqueue_dvr_command({ .command = dvr_rpc::RPC_DISABLE }, true);
 }
 
 void Dvr::shutdown() {
     DvrState expected = DvrState::Recording;
     dvr_state.compare_exchange_strong(expected, DvrState::Idle, std::memory_order_acq_rel);
-    encoder->post([this] {
-        if (recording_armed.load(std::memory_order_relaxed)) {
-            stop();
-        }
-    }, true);
+    enqueue_dvr_command({ .command = dvr_rpc::RPC_SHUTDOWN }, true);
 }
 
 bool Dvr::active() const {
     return recording_armed.load(std::memory_order_acquire);
 }
 
+void Dvr::enqueue(dvr_rpc rpc) {
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        queue_bytes_ += rpc.data.size();
+        queue_.push(std::move(rpc));
+    }
+    cv.notify_one();
+}
+
+void Dvr::enqueue_dvr_command(dvr_rpc rpc, bool drop_frames) {
+    switch (rpc.command) {
+    case dvr_rpc::RPC_STOP:
+    case dvr_rpc::RPC_TOGGLE:
+    case dvr_rpc::RPC_DISABLE:
+    case dvr_rpc::RPC_SHUTDOWN:
+        encoder->post([this, rpc]() mutable {
+            encoder->drain_pending();
+            enqueue(std::move(rpc));
+        }, drop_frames);
+        return;
+    default:
+        enqueue(std::move(rpc));
+        return;
+    }
+}
+
+void *Dvr::__THREAD__(void *param) {
+    pthread_setname_np(pthread_self(), "__DVR");
+    ((Dvr *)param)->loop();
+    return nullptr;
+}
+
+void Dvr::loop() {
+    while (true) {
+        std::unique_lock<std::mutex> lock(mtx);
+        bool has_rpc = cv.wait_for(lock, std::chrono::seconds(1), [this] { return !this->queue_.empty(); });
+        if (!has_rpc) {
+            lock.unlock();
+            update_storage_status(true);
+            continue;
+        }
+        dvr_rpc rpc = std::move(queue_.front());
+        queue_.pop();
+        queue_bytes_ -= rpc.data.size();
+        lock.unlock();
+
+        update_storage_status(false);
+
+        // Once disabled, only SHUTDOWN and the DISABLE finalize still mean anything. One guard
+        // here, rather than the same re-check inside every command.
+        if (dvr_is_disabled() &&
+            rpc.command != dvr_rpc::RPC_SHUTDOWN && rpc.command != dvr_rpc::RPC_DISABLE) {
+            continue;
+        }
+
+        switch (rpc.command) {
+        case dvr_rpc::RPC_AU:
+            handle_access_unit(rpc);
+            break;
+
+        case dvr_rpc::RPC_START:
+            spdlog::debug("[ DVR ] got rpc START");
+            if (!recording_armed.load(std::memory_order_relaxed)) {
+                start();
+            }
+            break;
+
+        case dvr_rpc::RPC_STOP:
+            spdlog::debug("[ DVR ] got rpc STOP");
+            if (recording_armed.load(std::memory_order_relaxed)) {
+                stop();
+            }
+            break;
+
+        case dvr_rpc::RPC_TOGGLE:
+            spdlog::debug("[ DVR ] got rpc TOGGLE");
+            if (recording_armed.load(std::memory_order_relaxed)) {
+                stop();
+            } else {
+                start();
+            }
+            break;
+
+        case dvr_rpc::RPC_DISABLE:
+            // Another thread already latched Disabled and logged why; just finalize what is open.
+            spdlog::debug("[ DVR ] got rpc DISABLE");
+            if (recording_armed.load(std::memory_order_relaxed)) {
+                stop();
+            }
+            osd_publish_bool_fact("dvr.recording", NULL, 0, false);
+            break;
+
+        case dvr_rpc::RPC_ROTATE:
+            spdlog::debug("[ DVR ] got rpc ROTATE");
+            if (recording_armed.load(std::memory_order_relaxed)) {
+                request_rotate();
+            }
+            break;
+
+        case dvr_rpc::RPC_FAIL:
+            spdlog::debug("[ DVR ] got rpc FAIL");
+            if (recording_armed.load(std::memory_order_relaxed)) {
+                fail(rpc.text, true);
+            }
+            break;
+
+        case dvr_rpc::RPC_SHUTDOWN:
+            spdlog::debug("[ DVR ] got rpc SHUTDOWN");
+            goto end;
+        }
+    }
+end:
+    if (recording_armed.load(std::memory_order_relaxed)) {
+        stop();
+    }
+    spdlog::info("DVR thread done.");
+}
+
+// Encoder thread. Copy and return - nothing here may touch storage. The encoder's buffer is only
+// valid for this call, hence the copy (which TsWriter used to make one level down).
 void Dvr::on_access_unit(const AccessUnit &au) {
+    if (!recording_armed.load(std::memory_order_relaxed) || au.len <= 0) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        if (queue_bytes_ + (size_t)au.len > MAX_QUEUE_BYTES) {
+            queue_overflow_ = true;
+            return;
+        }
+        dvr_rpc rpc;
+        rpc.command = dvr_rpc::RPC_AU;
+        rpc.data.assign(au.data, au.data + au.len);
+        rpc.pts_ms = au.pts_ms;
+        rpc.keyframe = au.keyframe;
+        queue_bytes_ += (size_t)au.len;
+        queue_.push(std::move(rpc));
+    }
+    cv.notify_one();
+}
+
+// DVR thread. This is the old on_access_unit body: everything below can block on storage.
+void Dvr::handle_access_unit(const dvr_rpc &au) {
     if (!recording_armed.load(std::memory_order_relaxed)) {
+        return;
+    }
+    bool overflowed = false;
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        overflowed = queue_overflow_;
+        queue_overflow_ = false;
+    }
+    if (overflowed) {
+        fail("access-unit queue overflowed (storage stalled)", false);
         return;
     }
 
@@ -142,7 +274,7 @@ void Dvr::on_access_unit(const AccessUnit &au) {
         return;
     }
 
-    if (writer.write_nal(au.data, au.len, next_frame_duration(au.pts_ms))) {
+    if (writer.write_nal(au.data.data(), (int)au.data.size(), next_frame_duration(au.pts_ms))) {
         frames_written++;
     }
 
@@ -162,19 +294,14 @@ void Dvr::on_access_unit(const AccessUnit &au) {
 }
 
 void Dvr::on_encoder_reset(int, int) {
-    if (recording_armed.load(std::memory_order_relaxed)) {
-        request_rotate();
-    }
+    enqueue_dvr_command({ .command = dvr_rpc::RPC_ROTATE }, false);
 }
 
 void Dvr::on_encoder_failed(const std::string &reason) {
-    if (recording_armed.load(std::memory_order_relaxed)) {
-        fail(reason, true);
-    }
-}
-
-void Dvr::on_tick(bool idle) {
-    update_storage_status(idle);
+    dvr_rpc rpc;
+    rpc.command = dvr_rpc::RPC_FAIL;
+    rpc.text = reason;
+    enqueue_dvr_command(std::move(rpc), false);
 }
 
 static std::string build_sequence_pattern(const std::string &filename_pattern) {
@@ -309,8 +436,7 @@ bool Dvr::open_output_file() {
         return false;
     }
     current_filename = ts_filename;
-    // Start the muxer for this file. Without it the writer thread discards every access unit and
-    // the file stays empty, while write_nal() still reports success because it only enqueues.
+
     if (!writer.begin_video(encoder->width(), encoder->height())) {
         spdlog::error("[ DVR ] could not start the muxer for {}", current_filename);
         writer.close();
@@ -428,7 +554,6 @@ bool Dvr::file_active() const {
 }
 
 void Dvr::stop() {
-    encoder->drain_pending();
     finalize_current_file();
     pending_open = false;
     recording_armed.store(false, std::memory_order_release);

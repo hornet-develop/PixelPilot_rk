@@ -465,7 +465,7 @@ void VideoEncoder::loop() {
         // Consumers get a heartbeat whether or not anything is encoding, so housekeeping that must run
         // while idle (storage monitoring) keeps running with no video.
         for (StreamConsumer *s : consumers_) {
-            s->on_tick(!has_task);
+            s->on_tick();
         }
         if (!has_task) {
             continue;

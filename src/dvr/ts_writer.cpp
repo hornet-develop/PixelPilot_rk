@@ -1,9 +1,7 @@
-#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <fcntl.h>
-#include <pthread.h>
 #include <unistd.h>
 #include <filesystem>
 
@@ -14,15 +12,6 @@
 static const uint32_t WRITE_FAIL_WARN_INTERVAL = 300;
 static const uint64_t SYNC_BYTES = 4 * 1024 * 1024;
 static const int64_t  SYNC_INTERVAL_MS = 2000;
-
-// Cap on buffered access-unit bytes. Encoded frames are small (~KB), so this absorbs a multi-second
-// SD stall; if exceeded, the SD has been dead far too long - drop and count a failure so the DVR
-// fail-stops rather than growing memory without bound.
-static const size_t MAX_QUEUE_BYTES = 32 * 1024 * 1024;
-
-// Longest close() waits for the writer thread to finish the queue. Only exceeded if the card is
-// wedged (uninterruptible I/O); bounded so shutdown can't hang until supervised teardown kills us.
-static const std::chrono::seconds DRAIN_TIMEOUT{5};
 
 // --- MPEG-TS layout ---
 static const size_t   TS_PACKET_SIZE = 188;
@@ -104,24 +93,11 @@ static void write_pcr(uint8_t *p, int64_t base) {
     p[5] = 0x00;
 }
 
-TsWriter::TsWriter() {
-    writer_thread_ = std::thread(&TsWriter::writer_loop, this);
-}
+TsWriter::TsWriter() {}
 
 TsWriter::~TsWriter() {
-    {
-        std::lock_guard<std::mutex> lock(qm_);
-        quit_ = true;
-    }
-    qcv_.notify_all();
-    // The writer thread holds a raw pointer to this object, so detaching it would leave
-    // it reading freed memory - its own mutex, condvars and queue - the moment a stuck write
-    // returned. If the card is wedged the thread is parked in uninterruptible I/O and this blocks
-    // until supervised teardown kills the process, which costs nothing extra: everything already
-    // written to that recording is on disk and playable. Only reachable at process exit; close()
-    // stays bounded, so segment rotation and stop are unaffected.
-    if (writer_thread_.joinable()) {
-        writer_thread_.join();
+    if (file) {
+        close();
     }
 }
 
@@ -131,7 +107,7 @@ bool TsWriter::write_block(const uint8_t *data, size_t len) {
     if (fwrite(data, 1, len, file) != len) {
         return false;   // short write (e.g. disk full)
     }
-    file_size_bytes.fetch_add(len, std::memory_order_relaxed);
+    file_size_bytes += len;
     return true;
 }
 
@@ -325,59 +301,6 @@ bool TsWriter::mux_access_unit(const uint8_t *data, int len, int duration_90k) {
     return ok;
 }
 
-void TsWriter::writer_loop() {
-    pthread_setname_np(pthread_self(), "__DVR_TS");
-    while (true) {
-        AuJob job;
-        bool abandoned;
-        {
-            std::unique_lock<std::mutex> lock(qm_);
-            qcv_.wait(lock, [this] { return !q_.empty() || quit_; });
-            if (q_.empty()) {
-                if (quit_) {
-                    return;
-                }
-                continue;
-            }
-            job = std::move(q_.front());
-            q_.pop();
-            q_bytes_ -= job.data.size();
-            abandoned = abandoned_;
-            processing_ = true;
-        }
-
-        if (file && video_started_ && !abandoned) {
-            if (!mux_access_unit(job.data.data(), (int)job.data.size(), job.duration)) {
-                if (write_fail_count % WRITE_FAIL_WARN_INTERVAL == 0) {
-                    spdlog::warn("[ DVR TsWriter ] write failed ({} times)", write_fail_count + 1);
-                }
-                write_fail_count++;
-                write_fail_streak.fetch_add(1, std::memory_order_relaxed);
-            } else {
-                write_fail_count = 0;
-                write_fail_streak.store(0, std::memory_order_relaxed);
-            }
-            bytes_since_sync_ += job.data.size();
-            sync_if_due();
-        } else if (!abandoned) {
-            // Nothing can be muxed: begin_video() was never called for this file. Silently
-            // discarding here once produced a run of 0-byte recordings whose logs reported
-            // thousands of frames written, because write_nal() only enqueues.
-            if (discard_count_ % WRITE_FAIL_WARN_INTERVAL == 0) {
-                spdlog::error("[ DVR TsWriter ] discarding access units - muxer not started "
-                              "({} so far)", discard_count_ + 1);
-            }
-            discard_count_++;
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(qm_);
-            processing_ = false;
-        }
-        qidle_.notify_all();
-    }
-}
-
 bool TsWriter::sync_now() {
     if (!file) {
         return true;
@@ -401,7 +324,7 @@ void TsWriter::sync_if_due() {
             spdlog::warn("[ DVR TsWriter ] flush/fdatasync failed ({} times)", write_fail_count + 1);
         }
         write_fail_count++;
-        write_fail_streak.fetch_add(1, std::memory_order_relaxed);
+        write_fail_streak++;
     }
 }
 
@@ -418,25 +341,16 @@ void TsWriter::sync_dir_of(const std::string &path) {
     ::close(dfd);
 }
 
-bool TsWriter::drain() {
-    std::unique_lock<std::mutex> lock(qm_);
-    return qidle_.wait_for(lock, DRAIN_TIMEOUT, [this] { return q_.empty() && !processing_; });
-}
-
 bool TsWriter::open(const std::string &path) {
-    if (abandoned_) {
-        spdlog::error("[ DVR TsWriter ] writer is unusable, not opening {}", path);
-        return false;
-    }
     file = fopen(path.c_str(), "w");
     if (!file) {
         spdlog::error("[ DVR TsWriter ] unable to open DVR file {}", path);
         return false;
     }
     sync_dir_of(path);
-    file_size_bytes.store(0, std::memory_order_relaxed);
+    file_size_bytes = 0;
     write_fail_count = 0;
-    write_fail_streak.store(0, std::memory_order_relaxed);
+    write_fail_streak = 0;
     bytes_since_sync_ = 0;
     last_sync_ms_ = monotonic_ms();
     return true;
@@ -465,37 +379,31 @@ bool TsWriter::write_nal(const uint8_t *data, int len, int duration_90k) {
     if (len <= 0) {
         return true;
     }
-    std::lock_guard<std::mutex> lock(qm_);
-    if (abandoned_) {
-        write_fail_streak.fetch_add(1, std::memory_order_relaxed);
+    if (!file || !video_started_) {
+        if (discard_count_ % WRITE_FAIL_WARN_INTERVAL == 0) {
+            spdlog::error("[ DVR TsWriter ] discarding access units - muxer not started "
+                          "({} so far)", discard_count_ + 1);
+        }
+        discard_count_++;
         return false;
     }
-    if (q_bytes_ + (size_t)len > MAX_QUEUE_BYTES) {
-        // The SD card has been stalled long enough to fill the buffer - treat as a write failure so
-        // the DVR fail-stops (dropping the frame here would leave a gap in the stream anyway).
-        write_fail_streak.fetch_add(1, std::memory_order_relaxed);
+
+    if (!mux_access_unit(data, len, duration_90k)) {
+        if (write_fail_count % WRITE_FAIL_WARN_INTERVAL == 0) {
+            spdlog::warn("[ DVR TsWriter ] write failed ({} times)", write_fail_count + 1);
+        }
+        write_fail_count++;
+        write_fail_streak++;
         return false;
     }
-    AuJob job;
-    job.data.assign(data, data + len);
-    job.duration = duration_90k;
-    q_bytes_ += (size_t)len;
-    q_.push(std::move(job));
-    qcv_.notify_one();
+    write_fail_count = 0;
+    write_fail_streak = 0;
+    bytes_since_sync_ += (size_t)len;
+    sync_if_due();
     return true;
 }
 
 bool TsWriter::close() {
-    if (!drain()) {
-        spdlog::error("[ DVR TsWriter ] write queue did not drain in {}s (storage wedged) — "
-                      "leaving the file as-is",
-                      (long long)DRAIN_TIMEOUT.count());
-        std::lock_guard<std::mutex> lock(qm_);
-        abandoned_ = true;
-        video_started_ = false;
-        return false;
-    }
-
     // No index to write: everything already flushed is a complete, playable stream.
     video_started_ = false;
     bool sync_ok = sync_now();
