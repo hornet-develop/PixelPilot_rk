@@ -47,9 +47,10 @@ public:
     void consumers_changed();
 
     // Run fn on the encoder thread. Lets a consumer serialise its own control operations (start/stop a
-    // recording) against encoding without needing a thread or a lock of its own. drop_frames
-    // discards queued frames first, matching the old RPC behaviour.
-    void post(std::function<void()> fn, bool drop_frames);
+    // recording) against encoding without needing a thread or a lock of its own. Queued frames are
+    // left alone and encoded first: the queue is shared, so one consumer's control operation must
+    // not cost the others frames.
+    void post(std::function<void()> fn);
 
     void set_video_params(uint32_t video_frm_width, uint32_t video_frm_height);
     void restart();                 // codec change: rebuild the encoder at the current geometry

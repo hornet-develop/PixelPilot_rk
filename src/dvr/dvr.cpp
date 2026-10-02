@@ -69,17 +69,17 @@ Dvr::Dvr(VideoEncoder *enc, const std::string &template_path, int segment_minute
 Dvr::~Dvr() {}
 
 void Dvr::start_recording() {
-    enqueue_dvr_command({ .command = dvr_rpc::RPC_START }, false);
+    enqueue_dvr_command({ .command = dvr_rpc::RPC_START });
 }
 
 void Dvr::stop_recording() {
     DvrState expected = DvrState::Recording;
     dvr_state.compare_exchange_strong(expected, DvrState::Idle, std::memory_order_acq_rel);
-    enqueue_dvr_command({ .command = dvr_rpc::RPC_STOP }, true);
+    enqueue_dvr_command({ .command = dvr_rpc::RPC_STOP });
 }
 
 void Dvr::toggle_recording() {
-    enqueue_dvr_command({ .command = dvr_rpc::RPC_TOGGLE }, false);
+    enqueue_dvr_command({ .command = dvr_rpc::RPC_TOGGLE });
 }
 
 void Dvr::disable(const std::string &reason) {
@@ -88,13 +88,13 @@ void Dvr::disable(const std::string &reason) {
         return;
     }
     spdlog::error("[ DVR ] disabling DVR for this session: {}", reason);
-    enqueue_dvr_command({ .command = dvr_rpc::RPC_DISABLE }, true);
+    enqueue_dvr_command({ .command = dvr_rpc::RPC_DISABLE });
 }
 
 void Dvr::shutdown() {
     DvrState expected = DvrState::Recording;
     dvr_state.compare_exchange_strong(expected, DvrState::Idle, std::memory_order_acq_rel);
-    enqueue_dvr_command({ .command = dvr_rpc::RPC_SHUTDOWN }, true);
+    enqueue_dvr_command({ .command = dvr_rpc::RPC_SHUTDOWN });
 }
 
 bool Dvr::active() const {
@@ -110,7 +110,7 @@ void Dvr::enqueue(dvr_rpc rpc) {
     cv.notify_one();
 }
 
-void Dvr::enqueue_dvr_command(dvr_rpc rpc, bool drop_frames) {
+void Dvr::enqueue_dvr_command(dvr_rpc rpc) {
     switch (rpc.command) {
     case dvr_rpc::RPC_STOP:
     case dvr_rpc::RPC_TOGGLE:
@@ -119,7 +119,7 @@ void Dvr::enqueue_dvr_command(dvr_rpc rpc, bool drop_frames) {
         encoder->post([this, rpc]() mutable {
             encoder->drain_pending();
             enqueue(std::move(rpc));
-        }, drop_frames);
+        });
         return;
     default:
         enqueue(std::move(rpc));
@@ -294,14 +294,14 @@ void Dvr::handle_access_unit(const dvr_rpc &au) {
 }
 
 void Dvr::on_encoder_reset(int, int) {
-    enqueue_dvr_command({ .command = dvr_rpc::RPC_ROTATE }, false);
+    enqueue_dvr_command({ .command = dvr_rpc::RPC_ROTATE });
 }
 
 void Dvr::on_encoder_failed(const std::string &reason) {
     dvr_rpc rpc;
     rpc.command = dvr_rpc::RPC_FAIL;
     rpc.text = reason;
-    enqueue_dvr_command(std::move(rpc), false);
+    enqueue_dvr_command(std::move(rpc));
 }
 
 static std::string build_sequence_pattern(const std::string &filename_pattern) {

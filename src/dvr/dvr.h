@@ -69,7 +69,7 @@ public:
 
 private:
     void enqueue(dvr_rpc rpc);
-    void enqueue_dvr_command(dvr_rpc rpc, bool drop_frames);
+    void enqueue_dvr_command(dvr_rpc rpc);
     void handle_access_unit(const dvr_rpc &rpc);
 
     void loop();

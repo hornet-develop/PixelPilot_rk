@@ -166,23 +166,23 @@ void VideoEncoder::drop_pending_frames() {
     queue_.swap(kept);
 }
 
-void VideoEncoder::post(std::function<void()> fn, bool drop_frames) {
-    enqueue(Task{Task::RUN, enc_frame_info{}, std::move(fn)}, drop_frames);
+void VideoEncoder::post(std::function<void()> fn) {
+    enqueue(Task{Task::RUN, enc_frame_info{}, std::move(fn)}, false);
 }
 
 void VideoEncoder::set_video_params(uint32_t w, uint32_t h) {
-    post([this, w, h] {
+    enqueue(Task{Task::RUN, enc_frame_info{}, [this, w, h] {
         if (w == video_frm_width && h == video_frm_height) {
             return;
         }
         video_frm_width = w;
         video_frm_height = h;
         geometry_dirty = true;
-    }, true);
+    }}, true);
 }
 
 void VideoEncoder::restart() {
-    post([this] { geometry_dirty = true; }, true);
+    enqueue(Task{Task::RUN, enc_frame_info{}, [this] { geometry_dirty = true; }}, true);
 }
 
 void VideoEncoder::request_keyframe() {
