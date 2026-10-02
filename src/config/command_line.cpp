@@ -256,7 +256,7 @@ CommandLineResult parseCommandLine(int argc, char **argv, Config &config) {
             case OPT_VIDEO_STREAM_ADDRESS: { // --video-stream-address <ip>
                 struct in_addr address{};
                 if (inet_pton(AF_INET, optarg, &address) != 1) {
-                    return invalidArgument("-a", optarg, "IPv4 address");
+                    return invalidArgument("--video-stream-address", optarg, "IPv4 address");
                 }
                 config.video_stream.address = optarg;
                 break;
@@ -264,7 +264,7 @@ CommandLineResult parseCommandLine(int argc, char **argv, Config &config) {
 
             case OPT_VIDEO_STREAM_PORT: // --video-stream-port <port>
                 if (!parseInteger(optarg, 1, std::numeric_limits<uint16_t>::max(), config.video_stream.port)) {
-                    return invalidArgument("-p", optarg, "1..65535");
+                    return invalidArgument("--video-stream-port", optarg, "1..65535");
                 }
                 break;
 

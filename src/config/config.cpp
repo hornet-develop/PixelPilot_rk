@@ -191,7 +191,7 @@ int configHandler(void *user, const char *section, const char *name, const char 
             }
             return 1;
         }
-        if (key == "socket_path") {
+        if (key == "socket") {
             config.video_stream.socket_path = value;
             return 1;
         }

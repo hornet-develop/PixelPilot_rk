@@ -60,6 +60,10 @@ public:
     void drain_pending();
     void shutdown();
 
+    // True if this encoder was built for writeback capture. Fixed at construction, so safe from any
+    // thread; the decode tap must not feed such an encoder, even once writeback has been given up.
+    bool captures_writeback() const;
+
     bool ready() const;
     // Geometry the encoder is currently configured at. Valid once ready().
     int width() const;

@@ -5,10 +5,10 @@
 #include <atomic>
 #include <string>
 
-// The single cross-thread recording state. Written on the encoder thread (start/stop/fail), by the
-// mavlink thread (stop_recording) and by main (shutdown); read by the OSD and mavlink to show
-// whether a recording is in progress. Note this says nothing about whether the ENCODER is running -
-// that is VideoEncoder::wants_frames(), since an RTP consumer can need frames with no recording.
+// The single cross-thread recording state. Written on the encoder thread (start/stop/fail) and by
+// main (shutdown); read by the OSD to show whether a recording is in progress. Note this says
+// nothing about whether the ENCODER is running - that is VideoEncoder::wants_frames(), since an RTP
+// consumer can need frames with no recording.
 // Disabled is a latch: an unrecoverable failure sets it and nothing clears it for the rest of the
 // process, so a broken DVR cannot retry in a loop.
 enum class DvrState {

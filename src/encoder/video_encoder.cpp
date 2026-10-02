@@ -193,6 +193,10 @@ void VideoEncoder::shutdown() {
     enqueue(Task{Task::SHUTDOWN, enc_frame_info{}, nullptr}, true);
 }
 
+bool VideoEncoder::captures_writeback() const {
+    return mode == RecordingMode::VideoWithOsdWriteback;
+}
+
 bool VideoEncoder::ready() const {
     return encoder.ready();
 }
