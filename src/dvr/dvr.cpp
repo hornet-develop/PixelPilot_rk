@@ -111,20 +111,10 @@ void Dvr::enqueue(dvr_rpc rpc) {
 }
 
 void Dvr::enqueue_dvr_command(dvr_rpc rpc) {
-    switch (rpc.command) {
-    case dvr_rpc::RPC_STOP:
-    case dvr_rpc::RPC_TOGGLE:
-    case dvr_rpc::RPC_DISABLE:
-    case dvr_rpc::RPC_SHUTDOWN:
-        encoder->post([this, rpc]() mutable {
-            encoder->drain_pending();
-            enqueue(std::move(rpc));
-        });
-        return;
-    default:
+    encoder->post([this, rpc]() mutable {
+        encoder->drain_pending();
         enqueue(std::move(rpc));
-        return;
-    }
+    });
 }
 
 void *Dvr::__THREAD__(void *param) {
@@ -294,14 +284,14 @@ void Dvr::handle_access_unit(const dvr_rpc &au) {
 }
 
 void Dvr::on_encoder_reset(int, int) {
-    enqueue_dvr_command({ .command = dvr_rpc::RPC_ROTATE });
+    enqueue({ .command = dvr_rpc::RPC_ROTATE });
 }
 
 void Dvr::on_encoder_failed(const std::string &reason) {
     dvr_rpc rpc;
     rpc.command = dvr_rpc::RPC_FAIL;
     rpc.text = reason;
-    enqueue_dvr_command(std::move(rpc));
+    enqueue(std::move(rpc));
 }
 
 static std::string build_sequence_pattern(const std::string &filename_pattern) {
