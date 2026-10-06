@@ -63,6 +63,10 @@ extern "C" {
 
 #define NO_VIDEO_TIMEOUT_MS 15000
 
+// Longest exit waits for the DVR worker before restoring the display. Same budget as the DVR's own
+// storage timeout: past it the card is frozen, and the worker is joined last instead.
+#define DVR_EXIT_TIMEOUT_S 5
+
 struct {
 	MppCtx		  ctx;
 	MppApi		  *mpi;
@@ -1112,9 +1116,20 @@ int main(int argc, char **argv)
         ret = pthread_join(tid_encoder, NULL);
         assert(!ret);
 	}
+
+    bool dvr_join_pending = false;
     if (dvr_thread_started) {
-        ret = pthread_join(tid_dvr, NULL);
-        assert(!ret);
+        struct timespec deadline;
+        clock_gettime(CLOCK_REALTIME, &deadline);
+        deadline.tv_sec += DVR_EXIT_TIMEOUT_S;
+        ret = pthread_timedjoin_np(tid_dvr, NULL, &deadline);
+        if (ret == ETIMEDOUT) {
+            spdlog::error("[ DVR ] worker stuck in storage I/O - restoring the display first, exit "
+                          "waits for it at the end");
+            dvr_join_pending = true;
+        } else {
+            assert(!ret);
+        }
     }
 
     // All OSD fact producers are stopped by this point.
@@ -1136,9 +1151,14 @@ int main(int argc, char **argv)
 
     remove(pidFilePath.c_str());
 
-    // Every thread that reads `dvr`/`encoder` has been joined, and ~TsWriter joins the TS writer
-    // thread, which can block if storage is wedged. Doing it here means such a hang costs only this
-    // process's own exit - the display has already been restored and the DRM state cleaned up.
+    if (dvr_join_pending) {
+        ret = pthread_join(tid_dvr, NULL);
+        assert(!ret);
+    }
+
+    // Every thread that reads `dvr`/`encoder` has been joined, and ~TsWriter closes a file left open,
+    // which can still block on storage; doing it last means that costs only this process's own
+    // exit - the display has already been restored and the DRM state cleaned up.
     delete dvr;
     dvr = NULL;
     delete video_streamer;

@@ -51,6 +51,14 @@ static const int MAX_OPEN_ATTEMPTS = 3;
 // fail-stops rather than growing memory without bound.
 static const size_t MAX_QUEUE_BYTES = 32 * 1024 * 1024;
 
+// Closing a file normally takes milliseconds. Taking longer than this means the card is struggling;
+// nothing can be logged while it is blocked, so we report it once it returns.
+static const int64_t SLOW_FINALIZE_WARN_MS = 1000;
+
+// Longest the worker may spend on one piece of work. Beyond it the card has stopped responding:
+// the DVR is disabled from outside the worker, the rest of the program is unaffected.
+static const int64_t STORAGE_TIMEOUT_MS = 5000;
+
 static int64_t monotonic_ms() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -111,6 +119,11 @@ void Dvr::enqueue(dvr_rpc rpc) {
 }
 
 void Dvr::enqueue_dvr_command(dvr_rpc rpc) {
+    if ((rpc.command == dvr_rpc::RPC_START || rpc.command == dvr_rpc::RPC_TOGGLE) &&
+        dvr_is_disabled()) {
+        spdlog::warn("[ DVR ] disabled for this session - start request ignored");
+        return;
+    }
     encoder->post([this, rpc]() mutable {
         encoder->drain_pending();
         enqueue(std::move(rpc));
@@ -129,7 +142,9 @@ void Dvr::loop() {
         bool has_rpc = cv.wait_for(lock, std::chrono::seconds(1), [this] { return !this->queue_.empty(); });
         if (!has_rpc) {
             lock.unlock();
+            busy_since_ms_.store(monotonic_ms(), std::memory_order_release);
             update_storage_status(true);
+            finish_storage_work();
             continue;
         }
         dvr_rpc rpc = std::move(queue_.front());
@@ -137,12 +152,13 @@ void Dvr::loop() {
         queue_bytes_ -= rpc.data.size();
         lock.unlock();
 
+        busy_since_ms_.store(monotonic_ms(), std::memory_order_release);
         update_storage_status(false);
 
-        // Once disabled, only SHUTDOWN and the DISABLE finalize still mean anything. One guard
-        // here, rather than the same re-check inside every command.
+        // Once disabled, only SHUTDOWN and the DISABLE finalize still mean anything.
         if (dvr_is_disabled() &&
             rpc.command != dvr_rpc::RPC_SHUTDOWN && rpc.command != dvr_rpc::RPC_DISABLE) {
+            finish_storage_work();
             continue;
         }
 
@@ -201,22 +217,70 @@ void Dvr::loop() {
             spdlog::debug("[ DVR ] got rpc SHUTDOWN");
             goto end;
         }
+        finish_storage_work();
     }
 end:
     if (recording_armed.load(std::memory_order_relaxed)) {
         stop();
     }
+    finish_storage_work();
     spdlog::info("DVR thread done.");
 }
 
-// Encoder thread. Copy and return - nothing here may touch storage. The encoder's buffer is only
-// valid for this call, hence the copy (which TsWriter used to make one level down).
+void Dvr::finish_storage_work() {
+    const int64_t since = busy_since_ms_.exchange(0, std::memory_order_acq_rel);
+    if (!stalled_.exchange(false, std::memory_order_acq_rel)) {
+        return;
+    }
+    spdlog::warn("[ DVR ] storage responded again after {:.1f}s - DVR stays disabled until restart",
+                 (monotonic_ms() - since) / 1000.0);
+    stop();
+    update_storage_status(true);
+}
+
+void Dvr::on_tick() {
+    const int64_t since = busy_since_ms_.load(std::memory_order_acquire);
+    if (since == 0) {
+        return;
+    }
+    const int64_t stuck_ms = monotonic_ms() - since;
+    if (stuck_ms < STORAGE_TIMEOUT_MS || dvr_is_disabled() ||
+        stalled_.exchange(true, std::memory_order_acq_rel)) {
+        return;
+    }
+    spdlog::error("[ DVR ] storage not responding for {:.1f}s - DVR disabled for this session ",
+                  stuck_ms / 1000.0);
+
+    dvr_state.store(DvrState::Disabled, std::memory_order_release);
+
+    recording_armed.store(false, std::memory_order_release);
+    encoder->consumers_changed();
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        std::queue<dvr_rpc> kept;
+        while (!queue_.empty()) {
+            if (queue_.front().command != dvr_rpc::RPC_AU) {
+                kept.push(std::move(queue_.front()));
+            }
+            queue_.pop();
+        }
+        queue_.swap(kept);
+        queue_bytes_ = 0;
+        queue_overflow_ = false;
+    }
+    osd_publish_bool_fact("dvr.recording", NULL, 0, false);
+    osd_publish_uint_fact("dvr.storage_status", NULL, 0, 0);
+}
+
 void Dvr::on_access_unit(const AccessUnit &au) {
     if (!recording_armed.load(std::memory_order_relaxed) || au.len <= 0) {
         return;
     }
     {
         std::lock_guard<std::mutex> lock(mtx);
+        if (!recording_armed.load(std::memory_order_relaxed)) {
+            return;
+        }
         if (queue_bytes_ + (size_t)au.len > MAX_QUEUE_BYTES) {
             queue_overflow_ = true;
             return;
@@ -491,6 +555,7 @@ void Dvr::finalize_current_file() {
                      frames_written, segment_video_ticks / 90000.0);
     }
 
+    const int64_t finalize_start_ms = monotonic_ms();
     bool empty = (frames_written == 0);
     bool finalized_ok = writer.close();
 
@@ -508,6 +573,12 @@ void Dvr::finalize_current_file() {
         } else {
             spdlog::info("[ DVR ] removed empty recording {}", current_filename);
         }
+    }
+
+    const int64_t finalize_ms = monotonic_ms() - finalize_start_ms;
+    if (finalize_ms > SLOW_FINALIZE_WARN_MS) {
+        spdlog::warn("[ DVR ] finalizing {} took {:.1f}s (storage slow or failing)",
+                     current_filename, finalize_ms / 1000.0);
     }
     current_filename.clear();
     segment_video_ticks = 0;
@@ -544,13 +615,18 @@ bool Dvr::file_active() const {
 }
 
 void Dvr::stop() {
-    finalize_current_file();
-    pending_open = false;
     recording_armed.store(false, std::memory_order_release);
+    pending_open = false;
+    encoder->consumers_changed();
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        queue_overflow_ = false;
+    }
     osd_publish_bool_fact("dvr.recording", NULL, 0, false);
     DvrState expected = DvrState::Recording;
     dvr_state.compare_exchange_strong(expected, DvrState::Idle, std::memory_order_acq_rel);
-    encoder->consumers_changed();
+
+    finalize_current_file();
 }
 
 void Dvr::fail(const std::string &reason, bool fatal) {
