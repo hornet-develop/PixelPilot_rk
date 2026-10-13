@@ -227,8 +227,11 @@ end:
         stop();
     }
     finish_storage_work();
-    if (dvr_is_disabled()) {
-        osd_publish_uint_fact("dvr.storage_status", NULL, 0, 0);
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        queue_ = {};
+        queue_bytes_ = 0;
+        queue_overflow_ = false;
     }
     spdlog::info("DVR thread done.");
 }
@@ -613,8 +616,7 @@ bool Dvr::open_next_file() {
     if (!open_output_file()) {
         if (++open_attempts >= MAX_OPEN_ATTEMPTS) {
             fail("could not open a recording file after " + std::to_string(open_attempts) +
-                     " attempts",
-                 true);
+                 " attempts", true);
         }
         return false;
     }
