@@ -75,7 +75,7 @@ private:
     void handle_access_unit(const dvr_rpc &rpc);
 
     void loop();
-    void finish_storage_work();
+    bool finish_storage_work();
     int  start();
     void stop();
     void fail(const std::string &reason, bool fatal);
@@ -99,7 +99,7 @@ private:
     // A card stuck in uninterruptible I/O parks the worker forever, the worker stamps when it started
     // its current piece of work (0 = idle); on_tick() declares a stall when that gets too old and
     // disables the DVR for the session; if the call ever returns, the worker only tidies up
-    // (closes the file) and the DVR stays disabled.
+    // (closes the file) and then exits.
     std::atomic<int64_t> busy_since_ms_{0};
     std::atomic<bool>    stalled_{false};
 

@@ -62,6 +62,7 @@ class OsdService {
     void paintBuffer(modeset_buf *buf);
 
     static std::unique_ptr<OsdService> instance_;
+    static std::mutex instance_mutex_;
 
     OsdServiceParams params_;
     Osd osd_;

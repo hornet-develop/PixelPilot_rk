@@ -144,7 +144,9 @@ void Dvr::loop() {
             lock.unlock();
             busy_since_ms_.store(monotonic_ms(), std::memory_order_release);
             update_storage_status(true);
-            finish_storage_work();
+            if (finish_storage_work() || dvr_is_disabled()) {
+                break;
+            }
             continue;
         }
         dvr_rpc rpc = std::move(queue_.front());
@@ -155,11 +157,10 @@ void Dvr::loop() {
         busy_since_ms_.store(monotonic_ms(), std::memory_order_release);
         update_storage_status(false);
 
-        // Once disabled, only SHUTDOWN and the DISABLE finalize still mean anything.
         if (dvr_is_disabled() &&
             rpc.command != dvr_rpc::RPC_SHUTDOWN && rpc.command != dvr_rpc::RPC_DISABLE) {
             finish_storage_work();
-            continue;
+            break;
         }
 
         switch (rpc.command) {
@@ -217,25 +218,30 @@ void Dvr::loop() {
             spdlog::debug("[ DVR ] got rpc SHUTDOWN");
             goto end;
         }
-        finish_storage_work();
+        if (finish_storage_work() || dvr_is_disabled()) {
+            break;
+        }
     }
 end:
     if (recording_armed.load(std::memory_order_relaxed)) {
         stop();
     }
     finish_storage_work();
+    if (dvr_is_disabled()) {
+        osd_publish_uint_fact("dvr.storage_status", NULL, 0, 0);
+    }
     spdlog::info("DVR thread done.");
 }
 
-void Dvr::finish_storage_work() {
+bool Dvr::finish_storage_work() {
     const int64_t since = busy_since_ms_.exchange(0, std::memory_order_acq_rel);
     if (!stalled_.exchange(false, std::memory_order_acq_rel)) {
-        return;
+        return false;
     }
-    spdlog::warn("[ DVR ] storage responded again after {:.1f}s - DVR stays disabled until restart",
+    spdlog::warn("[ DVR ] storage responded again after {:.1f}s - DVR stopped until restart",
                  (monotonic_ms() - since) / 1000.0);
     stop();
-    update_storage_status(true);
+    return true;
 }
 
 void Dvr::on_tick() {
@@ -308,7 +314,7 @@ void Dvr::handle_access_unit(const dvr_rpc &au) {
         queue_overflow_ = false;
     }
     if (overflowed) {
-        fail("access-unit queue overflowed (storage stalled)", false);
+        fail("access-unit queue overflowed (storage stalled)", true);
         return;
     }
 
@@ -343,7 +349,7 @@ void Dvr::handle_access_unit(const dvr_rpc &au) {
 
     const uint32_t fails = writer.consecutive_write_failures();
     if (fails >= MAX_CONSECUTIVE_WRITE_FAILURES) {
-        fail(std::to_string(fails) + " consecutive write failures (disk full or I/O error)", false);
+        fail(std::to_string(fails) + " consecutive write failures (disk full or I/O error)", true);
     }
 }
 
@@ -466,6 +472,13 @@ int Dvr::start() {
         return -1;
     }
 
+    DvrState expected = DvrState::Idle;
+    if (!dvr_state.compare_exchange_strong(expected, DvrState::Recording, std::memory_order_acq_rel)) {
+        spdlog::warn("[ DVR ] not starting recording: DVR disabled");
+        osd_publish_bool_fact("dvr.recording", NULL, 0, false);
+        return -1;
+    }
+
     frames_written = 0;
     rec_start_pts  = -1;
     segment_video_ticks = 0;
@@ -474,7 +487,6 @@ int Dvr::start() {
     pending_open = true;
     recording_armed.store(true, std::memory_order_release);
     osd_publish_bool_fact("dvr.recording", NULL, 0, true);
-    dvr_state.store(DvrState::Recording, std::memory_order_release);
 
     encoder->consumers_changed();
     encoder->request_keyframe();
@@ -602,7 +614,7 @@ bool Dvr::open_next_file() {
         if (++open_attempts >= MAX_OPEN_ATTEMPTS) {
             fail("could not open a recording file after " + std::to_string(open_attempts) +
                      " attempts",
-                 false);
+                 true);
         }
         return false;
     }
@@ -653,7 +665,7 @@ void Dvr::update_storage_status(bool force_update) {
 
     if (!storage.mount_ok()) {
         if (file_active()) {
-            fail("storage no longer mounted", false);
+            fail("storage no longer mounted", true);
         }
         if (storage_status_dev_known) {
             spdlog::info("[ DVR ] recording storage is no longer mounted");
@@ -667,7 +679,7 @@ void Dvr::update_storage_status(bool force_update) {
     dev_t now_dev = 0;
     if (!storage.device_id(now_dev)) {
         if (file_active() && session_dev_known) {
-            fail("recording storage was removed", false);
+            fail("recording storage was removed", true);
         }
         spdlog::warn("[ DVR ] failed to get recording storage device id");
         storage_status_dev_known = false;
@@ -677,7 +689,9 @@ void Dvr::update_storage_status(bool force_update) {
     }
     const bool same_recording_storage = session_dev_known && now_dev == session_dev;
     if (file_active() && session_dev_known && !same_recording_storage) {
-        fail("recording storage was removed", false);
+        fail("recording storage was removed", true);
+        osd_publish_uint_fact("dvr.storage_status", NULL, 0, 0);
+        return;
     }
 
     const bool new_storage = !storage_status_dev_known || now_dev != storage_status_dev;
