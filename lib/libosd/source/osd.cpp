@@ -81,7 +81,7 @@ Osd::WidgetEntry *Osd::findWidget(const std::string &id) {
 bool Osd::isWidgetEnabled(const std::string &id) const {
     const auto it = widget_enabled_.find(id);
     if (it == widget_enabled_.end()) {
-        return false;
+        return true; // Widgets are enabled by default unless explicitly disabled.
     }
     return it->second;
 }

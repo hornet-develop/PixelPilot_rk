@@ -8,6 +8,9 @@
 
 #include <spdlog/common.h>
 
+static constexpr std::size_t MAX_OSD_WIDGET_ENTRIES = 256;
+static constexpr std::size_t MAX_OSD_WIDGET_KEY_LENGTH = 64;
+
 struct SystemConfig {
     std::string listen_address = "0.0.0.0";
     uint16_t listen_port = 5600;
@@ -45,17 +48,7 @@ struct OsdConfig {
     std::string config_path;
     uint32_t refresh_ms = 1000;
 
-    std::unordered_map<std::string, bool> widget_enabled{
-        {"video_fps_resolution", true},
-        {"video_link_bitrate", true},
-        {"signal_snr", true},
-        {"signal_rssi", true},
-        {"dvr_storage", true},
-        {"wfb_status", true},
-        {"drone_status", true},
-        {"dvr_status", true},
-        {"msposd", true},
-    };
+    std::unordered_map<std::string, bool> widget_enabled{};
 };
 
 struct Config {

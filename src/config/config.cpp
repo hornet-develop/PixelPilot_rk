@@ -122,16 +122,33 @@ int configHandler(void *user, const char *section, const char *name, const char 
         }
     }
     if (section_name == "osd.widgets") {
+
+        const std::string_view widget_key(key);
+        if (widget_key.size() > MAX_OSD_WIDGET_KEY_LENGTH) {
+            spdlog::error("OSD widget key exceeds {} bytes", MAX_OSD_WIDGET_KEY_LENGTH);
+            return 0;
+        }
+
         bool enabled;
         if (!parseBool(val, enabled)) {
             return invalidConfigValue("osd.widgets", val, "true|false");
         }
-        const auto widget = config.osd.widget_enabled.find(std::string(key));
-        if (widget == config.osd.widget_enabled.end()) {
-            spdlog::warn("Unknown OSD widget '{}'", key);
+
+        auto &widgets = config.osd.widget_enabled;
+        const std::string widget_id(widget_key);
+        const auto widget = widgets.find(widget_id);
+
+        if (widget != widgets.end()) {
+            widget->second = enabled;
             return 1;
         }
-        widget->second = enabled;
+
+        if (widgets.size() >= MAX_OSD_WIDGET_ENTRIES) {
+            spdlog::error("OSD widget settings exceed {} unique entries", MAX_OSD_WIDGET_ENTRIES);
+            return 0;
+        }
+
+        widgets.emplace(widget_id, enabled);
         return 1;
     }
     if (section_name == "dvr") {
