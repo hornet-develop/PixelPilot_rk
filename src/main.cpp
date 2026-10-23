@@ -45,7 +45,7 @@ extern "C" {
 #include "wfbcli.hpp"
 #include "dvr/dvr.h"
 #include "encoder/video_encoder.h"
-#include "video_streamer.hpp"
+#include "video_restreamer.hpp"
 #include "scheduling_helper.hpp"
 #include "time_util.h"
 #include "pixelpilot_config.h"
@@ -106,7 +106,7 @@ pthread_t tid_frame;
 VideoCodec codec = VideoCodec::H265;
 Dvr *dvr = NULL;
 VideoEncoder *encoder = NULL;
-VideoStreamer *video_streamer = NULL;
+VideoRestreamer *video_restreamer = NULL;
 int signal_flag = 0;
 
 // --- DVR writeback (WYSIWYG) capture pool ---
@@ -244,7 +244,7 @@ void init_buffer(MppFrame frame) {
 
 	ret = modeset_perform_modeset(drm_fd, output_list, output_list->video_request, &output_list->video_plane, mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, video_zpos, stretch_video);
 	if (ret < 0 && dvr_wb_mode) {
-        spdlog::error("[ Encoder ] modeset failed with writeback attached - detaching, DVR and video stream disabled");
+        spdlog::error("[ Encoder ] modeset failed with writeback attached - detaching, DVR and restreaming disabled");
 		modeset_detach_writeback(drm_fd, output_list);
 		dvr_wb_mode = false;
 		if (dvr != NULL) {
@@ -489,7 +489,7 @@ void *__DISPLAY_THREAD__(void *param)
                 wb_busy[wb_idx].store(false, std::memory_order_release);
                 if (++wb_commit_fails >= 3) {
                     spdlog::error("[ Encoder ] writeback commits keep failing - capture disabled, "
-                                  "DVR and video stream unavailable (display preserved)");
+                                  "DVR and restreaming unavailable (display preserved)");
                     dvr_wb_mode = false;
                     if (dvr != NULL) {
                         dvr->disable("writeback commits keep failing (display preserved)");
@@ -925,8 +925,8 @@ int main(int argc, char **argv)
 	}
 	const bool print_modelist = command_line_result == CommandLineResult::PrintModeList;
 
-    if (!config.video_stream.address.empty() && !config.video_stream.socket_path.empty()) {
-        spdlog::error("--video-stream-address and --video-stream-socket are mutually exclusive");
+    if (!config.restream.address.empty() && !config.restream.socket_path.empty()) {
+        spdlog::error("--restream-address and --restream-socket are mutually exclusive");
         return -1;
     }
 
@@ -984,16 +984,16 @@ int main(int argc, char **argv)
 	bool encoder_thread_started = false;
     bool dvr_thread_started = false;
 	bool dvr_requested = !config.dvr.file_template.empty();
-    bool stream_requested = !config.video_stream.address.empty() || !config.video_stream.socket_path.empty();
+    bool restream_requested = !config.restream.address.empty() || !config.restream.socket_path.empty();
 
-    if ((dvr_requested || stream_requested) && config.dvr.osd) {
+    if ((dvr_requested || restream_requested) && config.dvr.osd) {
         dvr_wb_mode = setup_writeback();
 
 		if (!dvr_wb_mode) {
 			spdlog::error("--dvr-osd requires DRM writeback capture, which is unavailable - "
                           "encoding disabled (drop --dvr-osd for clean video)");
 			dvr_requested = false;
-            stream_requested = false;
+            restream_requested = false;
 		}
 	}
 
@@ -1012,7 +1012,7 @@ int main(int argc, char **argv)
     assert(osd_started);
 
     // The encoder runs whenever some consumer wants frames. Build it if any is configured.
-    if (dvr_requested || stream_requested) {
+    if (dvr_requested || restream_requested) {
         if (dvr_wb_mode) {
             // Writeback: encode the composited display output at the WB buffers' geometry.
             encoder = new VideoEncoder(output_list->mode.vrefresh, config.dvr.bitrate,
@@ -1031,17 +1031,17 @@ int main(int argc, char **argv)
                             output_list->mode.vrefresh);
             encoder->add_consumer(dvr);
         }
-        if (stream_requested) {
-            video_streamer = new VideoStreamer();
-            const bool opened = !config.video_stream.socket_path.empty()
-                                    ? video_streamer->open_unix(config.video_stream.socket_path)
-                                    : video_streamer->open_udp(config.video_stream.address, config.video_stream.port);
+        if (restream_requested) {
+            video_restreamer = new VideoRestreamer();
+            const bool opened = !config.restream.socket_path.empty()
+                                    ? video_restreamer->open_unix(config.restream.socket_path)
+                                    : video_restreamer->open_udp(config.restream.address, config.restream.port);
             if (opened) {
-                encoder->add_consumer(video_streamer);
+                encoder->add_consumer(video_restreamer);
             } else {
                 // A bad destination must not take down recording or live video.
-                delete video_streamer;
-                video_streamer = NULL;
+                delete video_restreamer;
+                video_restreamer = NULL;
             }
 		}
 
@@ -1050,8 +1050,8 @@ int main(int argc, char **argv)
             spdlog::error("Failed to start the encoder thread ({}), encoding disabled", ret);
 			delete dvr;
 			dvr = NULL;
-            delete video_streamer;
-            video_streamer = NULL;
+            delete video_restreamer;
+            video_restreamer = NULL;
 			delete encoder;
 			encoder = NULL;
 		} else {
@@ -1161,8 +1161,8 @@ int main(int argc, char **argv)
     // exit - the display has already been restored and the DRM state cleaned up.
     delete dvr;
     dvr = NULL;
-    delete video_streamer;
-    video_streamer = NULL;
+    delete video_restreamer;
+    video_restreamer = NULL;
     delete encoder;
     encoder = NULL;
 

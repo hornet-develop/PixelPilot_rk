@@ -58,7 +58,7 @@ struct OsdConfig {
     };
 };
 
-struct VideoStreamConfig {
+struct RestreamConfig {
     std::string address = "0.0.0.0";
     uint16_t port = 5604;
     std::string socket_path;
@@ -68,7 +68,7 @@ struct Config {
     SystemConfig system;
     DvrConfig dvr;
     OsdConfig osd;
-    VideoStreamConfig video_stream;
+    RestreamConfig restream;
 };
 
 bool loadConfigFile(const std::filesystem::path &path, Config &config);

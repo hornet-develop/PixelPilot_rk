@@ -57,16 +57,16 @@ constexpr char help_text[] =
     "\n"
     "    --dvr-require-mount       - Only record if the DVR directory is on a mounted external device\n"
     "\n"
-    "    --video-stream-address <ip>\n"
-    "                              - Send the re-encoded H265 out as an RTP stream to this address.\n"
-    "                                Enables streaming; works with or without recording, and both\n"
-    "                                outputs carry the same video.\n"
+    "    --restream-address <ip>\n"
+    "                              - Restream the re-encoded H265 video as RTP to this address.\n"
+    "                                Enables restreaming independently of DVR recording, both\n"
+    "                                outputs use the same encoded video\n"
     "\n"
-    "    --video-stream-port <port> - UDP port for the outgoing RTP stream (Default: 5604)\n"
+    "    --restream-port <port>    - UDP port for the RTP restream (Default: 5604)\n"
     "\n"
-    "    --video-stream-socket <path>\n"
-    "                              - Send the RTP stream to this unix datagram socket instead of\n"
-    "                                UDP. A filesystem path the receiver has bound.\n"
+    "    --restream-socket <path>\n"
+    "                              - Send the RTP restream to this Unix datagram socket instead of\n"
+    "                                UDP\n"
     "\n"
     "    --screen-mode <mode>      - Override default screen mode. <width>x<heigth>@<fps> ex: 1920x1080@120\n"
     "\n"
@@ -96,9 +96,9 @@ enum OptionId {
     OPT_DVR_SEGMENT_TIME,
     OPT_DVR_MIN_FREE_MB,
     OPT_DVR_REQUIRE_MOUNT,
-    OPT_VIDEO_STREAM_ADDRESS,
-    OPT_VIDEO_STREAM_PORT,
-    OPT_VIDEO_STREAM_SOCKET,
+    OPT_RESTREAM_ADDRESS,
+    OPT_RESTREAM_PORT,
+    OPT_RESTREAM_SOCKET,
     OPT_LOG_LEVEL,
     OPT_OSD,
     OPT_OSD_CONFIG,
@@ -125,9 +125,9 @@ const struct option long_options[] = {
     {"dvr-segment-time", required_argument, nullptr, OPT_DVR_SEGMENT_TIME},
     {"dvr-min-free-mb", required_argument, nullptr, OPT_DVR_MIN_FREE_MB},
     {"dvr-require-mount", no_argument, nullptr, OPT_DVR_REQUIRE_MOUNT},
-    {"video-stream-address", required_argument, nullptr, OPT_VIDEO_STREAM_ADDRESS},
-    {"video-stream-port",   required_argument, nullptr, OPT_VIDEO_STREAM_PORT},
-    {"video-stream-socket", required_argument, nullptr, OPT_VIDEO_STREAM_SOCKET},
+    {"restream-address", required_argument, nullptr, OPT_RESTREAM_ADDRESS},
+    {"restream-port",   required_argument, nullptr, OPT_RESTREAM_PORT},
+    {"restream-socket", required_argument, nullptr, OPT_RESTREAM_SOCKET},
     {"log-level", required_argument, nullptr, OPT_LOG_LEVEL},
     {"osd", no_argument, nullptr, OPT_OSD},
     {"osd-config", required_argument, nullptr, OPT_OSD_CONFIG},
@@ -253,23 +253,23 @@ CommandLineResult parseCommandLine(int argc, char **argv, Config &config) {
                 config.dvr.require_mount = true;
                 break;
 
-            case OPT_VIDEO_STREAM_ADDRESS: { // --video-stream-address <ip>
+            case OPT_RESTREAM_ADDRESS: { // --restream-address <ip>
                 struct in_addr address{};
                 if (inet_pton(AF_INET, optarg, &address) != 1) {
-                    return invalidArgument("--video-stream-address", optarg, "IPv4 address");
+                    return invalidArgument("--restream-address", optarg, "IPv4 address");
                 }
-                config.video_stream.address = optarg;
+                config.restream.address = optarg;
                 break;
             }
 
-            case OPT_VIDEO_STREAM_PORT: // --video-stream-port <port>
-                if (!parseInteger(optarg, 1, std::numeric_limits<uint16_t>::max(), config.video_stream.port)) {
-                    return invalidArgument("--video-stream-port", optarg, "1..65535");
+            case OPT_RESTREAM_PORT: // --restream-port <port>
+                if (!parseInteger(optarg, 1, std::numeric_limits<uint16_t>::max(), config.restream.port)) {
+                    return invalidArgument("--restream-port", optarg, "1..65535");
                 }
                 break;
 
-            case OPT_VIDEO_STREAM_SOCKET: // --video-stream-socket <path>
-                config.video_stream.socket_path = optarg;
+            case OPT_RESTREAM_SOCKET: // --restream-socket <path>
+                config.restream.socket_path = optarg;
                 break;
 
             case OPT_LOG_LEVEL: // --log-level
