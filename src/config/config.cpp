@@ -193,6 +193,26 @@ int configHandler(void *user, const char *section, const char *name, const char 
             return 1;
         }
     }
+    if (section_name == "restream") {
+        if (key == "address") {
+            struct in_addr address{};
+            if (inet_pton(AF_INET, value, &address) != 1) {
+                return invalidConfigValue("restream.address", val, "IPv4 address");
+            }
+            config.restream.address = value;
+            return 1;
+        }
+        if (key == "port") {
+            if (!parseInteger(value, 1, std::numeric_limits<uint16_t>::max(), config.restream.port)) {
+                return invalidConfigValue("restream.port", val, "1..65535");
+            }
+            return 1;
+        }
+        if (key == "socket") {
+            config.restream.socket_path = value;
+            return 1;
+        }
+    }
     spdlog::warn("Unknown config option '{}.{}'", section_name, key);
     return 1;
 }

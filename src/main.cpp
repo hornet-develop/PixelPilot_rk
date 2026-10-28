@@ -44,6 +44,8 @@ extern "C" {
 #include "osd/osd_service.hpp"
 #include "wfbcli.hpp"
 #include "dvr/dvr.h"
+#include "encoder/video_encoder.h"
+#include "video_restreamer.hpp"
 #include "scheduling_helper.hpp"
 #include "time_util.h"
 #include "pixelpilot_config.h"
@@ -60,6 +62,10 @@ extern "C" {
 #define CODEC_ALIGN(x, a)   (((x)+(a)-1)&~((a)-1))
 
 #define NO_VIDEO_TIMEOUT_MS 15000
+
+// Longest exit waits for the DVR worker before restoring the display. Same budget as the DVR's own
+// storage timeout: past it the card is frozen, and the worker is joined last instead.
+#define DVR_EXIT_TIMEOUT_S 5
 
 struct {
 	MppCtx		  ctx;
@@ -99,6 +105,8 @@ std::atomic<bool> codec_changed = false;
 pthread_t tid_frame;
 VideoCodec codec = VideoCodec::H265;
 Dvr *dvr = NULL;
+VideoEncoder *encoder = NULL;
+VideoRestreamer *video_restreamer = NULL;
 int signal_flag = 0;
 
 // --- DVR writeback (WYSIWYG) capture pool ---
@@ -236,7 +244,7 @@ void init_buffer(MppFrame frame) {
 
 	ret = modeset_perform_modeset(drm_fd, output_list, output_list->video_request, &output_list->video_plane, mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, video_zpos, stretch_video);
 	if (ret < 0 && dvr_wb_mode) {
-		spdlog::error("[ DVR ] modeset failed with writeback attached - detaching, DVR disabled");
+        spdlog::error("[ Encoder ] modeset failed with writeback attached - detaching, DVR and restreaming disabled");
 		modeset_detach_writeback(drm_fd, output_list);
 		dvr_wb_mode = false;
 		if (dvr != NULL) {
@@ -246,12 +254,11 @@ void init_buffer(MppFrame frame) {
 	}
 	assert(ret >= 0);
 
-	// dvr setup
-	if (dvr != NULL){     
-        // A resolution change start new recording session
+	// encoder setup: a resolution change rebuilds the encoder (and rolls the DVR to a new file)
+	if (encoder != NULL) {
         if (prev_frm_width != output_list->video_frm_width ||
             prev_frm_height != output_list->video_frm_height) {
-            dvr->set_video_params(output_list->video_frm_width, output_list->video_frm_height);
+            encoder->set_video_params(output_list->video_frm_width, output_list->video_frm_height);
         }
 	}
 }
@@ -340,8 +347,8 @@ void *__FRAME_THREAD__(void *param)
 
                     // Decode-tap DVR (VideoOnly) is fed here. Writeback mode taps the composited
                     // output on the display thread instead, so skip it here.
-                    if (dvr_is_recording() && dvr != NULL && !dvr_wb_mode) {
-                        dvr_frame_info dfi;
+                    if (encoder != NULL && encoder->wants_frames() && !encoder->captures_writeback()) {
+                        enc_frame_info dfi{};
                         dfi.prime_fd   = mpi.frame_to_drm[i].prime_fd;
                         dfi.width      = output_list->video_frm_width;
                         dfi.height     = output_list->video_frm_height;
@@ -349,7 +356,7 @@ void *__FRAME_THREAD__(void *param)
                         dfi.ver_stride = mpp_frame_get_ver_stride(frame);
                         dfi.buf_size   = dfi.hor_stride * dfi.ver_stride * 2;
                         dfi.pts        = feed_data_ts;
-                        dvr->frame(dfi);
+                        encoder->frame(dfi);
                     }
 
 				}
@@ -432,7 +439,7 @@ void *__DISPLAY_THREAD__(void *param)
         static int  wb_arm_fails = 0;
         int     wb_idx = -1;
         int32_t wb_out_fence = -1;
-        bool    want_capture = dvr_wb_mode && dvr_is_recording() && dvr != NULL && fb_id != 0;
+        bool    want_capture = dvr_wb_mode && encoder != NULL && encoder->wants_frames() && fb_id != 0;
         if (want_capture) {
             for (int i = 0; i < WB_BUF_COUNT; i++) {
                 bool expected = false;
@@ -447,7 +454,7 @@ void *__DISPLAY_THREAD__(void *param)
                     wb_busy[wb_idx].store(false, std::memory_order_release);
                     wb_idx = -1;
                     if (wb_arm_fails++ % WB_ARM_FAIL_WARN_INTERVAL == 0) {
-                        spdlog::warn("[ DVR ] modeset_arm_writeback failed, skipping capture ({} times)",
+                        spdlog::warn("[ Encoder ] modeset_arm_writeback failed, skipping capture ({} times)",
                                      wb_arm_fails);
                     }
                 } else {
@@ -468,21 +475,25 @@ void *__DISPLAY_THREAD__(void *param)
         if (wb_idx >= 0) {
             if (commit_ret == 0) {
                 wb_commit_fails = 0;
-                dvr_frame_info dfi{};
+                enc_frame_info dfi{};
                 dfi.prime_fd   = wb_bufs[wb_idx].prime_fd;
                 dfi.buf_size   = wb_bufs[wb_idx].size;
                 dfi.pts        = decoding_pts;
                 dfi.fence_fd   = wb_out_fence;
                 dfi.wb_index   = wb_idx;
-                dvr->writeback_frame(dfi);
+                encoder->writeback_frame(dfi);
             } else {
                 if (wb_out_fence >= 0) {
                     close(wb_out_fence);
                 }
                 wb_busy[wb_idx].store(false, std::memory_order_release);
                 if (++wb_commit_fails >= 3) {
-                    // Centrally shut down the DVR to end recording and clear the OSD indicator.
-                    dvr->disable("writeback commits keep failing (display preserved)");
+                    spdlog::error("[ Encoder ] writeback commits keep failing - capture disabled, "
+                                  "DVR and restreaming unavailable (display preserved)");
+                    dvr_wb_mode = false;
+                    if (dvr != NULL) {
+                        dvr->disable("writeback commits keep failing (display preserved)");
+                    }
                 }
             }
         }
@@ -698,14 +709,14 @@ static void free_wb_bufs(int count)
 static bool setup_writeback()
 {
 	if (modeset_find_writeback(drm_fd, output_list) != 0) {
-		spdlog::error("[ DVR ] no DRM writeback connector available");
+		spdlog::error("[ Encoder ] no DRM writeback connector available");
 		return false;
 	}
 	for (int i = 0; i < WB_BUF_COUNT; i++) {
 		wb_bufs[i].width  = output_list->mode.hdisplay;
 		wb_bufs[i].height = output_list->mode.vdisplay;
 		if (modeset_create_wb_fb(drm_fd, &wb_bufs[i]) != 0) {
-			spdlog::error("[ DVR ] failed to allocate writeback buffer {}", i);
+			spdlog::error("[ Encoder ] failed to allocate writeback buffer {}", i);
 			free_wb_bufs(i);
 			return false;
 		}
@@ -713,21 +724,21 @@ static bool setup_writeback()
 	}
 
 	if (modeset_attach_writeback(drm_fd, output_list, stretch_video) != 0) {
-		spdlog::error("[ DVR ] could not attach the writeback connector to CRTC {} - "
-		              "WYSIWYG recording unavailable", output_list->crtc.id);
+		spdlog::error("[ Encoder ] could not attach the writeback connector to CRTC {} - "
+		              "WYSIWYG capture unavailable", output_list->crtc.id);
 		free_wb_bufs(WB_BUF_COUNT);
 		return false;
 	}
 	if (modeset_check_writeback(drm_fd, output_list, wb_bufs[0].fb) != 0) {
-		spdlog::error("[ DVR ] this kernel rejects the persistent-writeback commit shape "
-		              "(see the atomic check error above) - WYSIWYG recording unavailable");
+		spdlog::error("[ Encoder ] this kernel rejects the persistent-writeback commit shape "
+		              "(see the atomic check error above) - WYSIWYG capture unavailable");
 		modeset_detach_writeback(drm_fd, output_list);
 		free_wb_bufs(WB_BUF_COUNT);
 		return false;
 	}
 
 	wb_bufs_ready = true;
-	spdlog::info("[ DVR ] writeback WYSIWYG capture enabled: {}x{}, {} buffers, format NV12, "
+	spdlog::info("[ Encoder ] writeback WYSIWYG capture enabled: {}x{}, {} buffers, format NV12, "
 	             "connector persistently attached to CRTC {}",
 	             output_list->mode.hdisplay, output_list->mode.vdisplay, WB_BUF_COUNT,
 	             output_list->crtc.id);
@@ -780,8 +791,8 @@ void restart_mpi(MppPacket &packet, VideoCodec new_codec)
 	ret = pthread_mutex_unlock(&video_mutex);
 	assert(!ret);
 
-	if (dvr != NULL) {
-		dvr->restart();
+	if (encoder != NULL) {
+		encoder->restart();
 	}
 
 	cleanup_mpi(packet);
@@ -914,6 +925,11 @@ int main(int argc, char **argv)
 	}
 	const bool print_modelist = command_line_result == CommandLineResult::PrintModeList;
 
+    if (!config.restream.address.empty() && !config.restream.socket_path.empty()) {
+        spdlog::error("--restream-address and --restream-socket are mutually exclusive");
+        return -1;
+    }
+
 	std::string pidFilePath = "/run/pixelpilot.pid";
     std::ofstream pidFile(pidFilePath);
     pidFile << getpid();
@@ -964,19 +980,24 @@ int main(int argc, char **argv)
 	ret = pthread_cond_init(&video_cond, NULL);
 	assert(!ret);
 
-	pthread_t tid_display, tid_dvr, tid_wfbcli;
-	bool dvr_thread_started = false;
+    pthread_t tid_display, tid_encoder, tid_dvr, tid_wfbcli;
+	bool encoder_thread_started = false;
+    bool dvr_thread_started = false;
 	bool dvr_requested = !config.dvr.file_template.empty();
-	if (dvr_requested && config.dvr.osd) {
-		dvr_wb_mode = setup_writeback();
+    bool restream_requested = !config.restream.address.empty() || !config.restream.socket_path.empty();
+
+    if ((dvr_requested || restream_requested) && config.dvr.osd) {
+        dvr_wb_mode = setup_writeback();
+
 		if (!dvr_wb_mode) {
 			spdlog::error("--dvr-osd requires DRM writeback capture, which is unavailable - "
-			              "recording disabled (drop --dvr-osd to record clean video)");
+                          "encoding disabled (drop --dvr-osd for clean video)");
 			dvr_requested = false;
+            restream_requested = false;
 		}
 	}
 
-	OsdServiceParams params;
+    OsdServiceParams params;
 	params.out = output_list;
 	params.fd = drm_fd;
 	params.config_path = config.osd.config_path;
@@ -986,40 +1007,67 @@ int main(int argc, char **argv)
 	params.enabled = config.osd.enabled;
 	params.widget_enabled = config.osd.widget_enabled;
 
-	// OSD service lifetime must cover all threads that publish OSD facts.
-	bool osd_started = OsdService::start(std::move(params));
-	assert(osd_started);
+    // OSD service lifetime must cover all threads that publish OSD facts.
+    bool osd_started = OsdService::start(std::move(params));
+    assert(osd_started);
 
-	if (dvr_requested) {
-		dvr_thread_params args;
-		args.filename_template = config.dvr.file_template;
-        args.enable_osd_in_dvr = config.dvr.osd;
-        args.dvr_bitrate = config.dvr.bitrate;
-        args.dvr_segment_minutes = config.dvr.segment_time_min;
-        args.dvr_min_free_bytes = (uint64_t)config.dvr.min_free_mb * 1024 * 1024;
-        args.dvr_require_mount = config.dvr.require_mount;
-        args.display_fps    = output_list->mode.vrefresh;
-        args.enable_wb = dvr_wb_mode;
+    // The encoder runs whenever some consumer wants frames. Build it if any is configured.
+    if (dvr_requested || restream_requested) {
         if (dvr_wb_mode) {
-            args.wb_width  = output_list->mode.hdisplay;
-            args.wb_height = output_list->mode.vdisplay;
-            args.wb_hor_stride_bytes = wb_bufs[0].stride;              // Y stride (NV12) / BGRA stride
-            args.wb_ver_stride = (output_list->mode.vdisplay + 15) & ~15u; // matches modeset_create_wb_fb
+            // Writeback: encode the composited display output at the WB buffers' geometry.
+            encoder = new VideoEncoder(output_list->mode.vrefresh, config.dvr.bitrate,
+                                        output_list->mode.hdisplay, output_list->mode.vdisplay,
+                                        wb_bufs[0].stride,                                 // Y stride (NV12)
+                                        (output_list->mode.vdisplay + 15) & ~15u);         // matches modeset_create_wb_fb
+        } else {
+            // Decode tap: encode the decoded frame at its native size.
+            encoder = new VideoEncoder(output_list->mode.vrefresh, config.dvr.bitrate,
+                                        output_list->video_frm_width, output_list->video_frm_height);
         }
-		args.video_p.video_frm_width = output_list->video_frm_width;
-		args.video_p.video_frm_height = output_list->video_frm_height;
-		dvr = new Dvr(args);
-		ret = pthread_create(&tid_dvr, NULL, &Dvr::__THREAD__, dvr);
+
+        if (dvr_requested) {
+            dvr = new Dvr(encoder, config.dvr.file_template, config.dvr.segment_time_min,
+                            (uint64_t)config.dvr.min_free_mb * 1024 * 1024, config.dvr.require_mount,
+                            output_list->mode.vrefresh);
+            encoder->add_consumer(dvr);
+        }
+        if (restream_requested) {
+            video_restreamer = new VideoRestreamer();
+            const bool opened = !config.restream.socket_path.empty()
+                                    ? video_restreamer->open_unix(config.restream.socket_path)
+                                    : video_restreamer->open_udp(config.restream.address, config.restream.port);
+            if (opened) {
+                encoder->add_consumer(video_restreamer);
+            } else {
+                // A bad destination must not take down recording or live video.
+                delete video_restreamer;
+                video_restreamer = NULL;
+            }
+		}
+
+		ret = pthread_create(&tid_encoder, NULL, &VideoEncoder::__THREAD__, encoder);
 		if (ret) {
-			// tid_dvr is not valid, so it must not be joined later. Carry on without the DVR
-			// rather than taking down live video.
-			spdlog::error("Failed to start the DVR thread ({}), recording disabled", ret);
+            spdlog::error("Failed to start the encoder thread ({}), encoding disabled", ret);
 			delete dvr;
 			dvr = NULL;
+            delete video_restreamer;
+            video_restreamer = NULL;
+			delete encoder;
+			encoder = NULL;
 		} else {
-			dvr_thread_started = true;
-		}
-	}
+			encoder_thread_started = true;
+        }
+
+        if (dvr != NULL) {
+            ret = pthread_create(&tid_dvr, NULL, &Dvr::__THREAD__, dvr);
+            if (ret) {
+                dvr->disable("failed to start the DVR thread (" + std::to_string(ret) + ")");
+            } else {
+                dvr_thread_started = true;
+            }
+        }
+    }
+
 	ret = pthread_create(&tid_frame, NULL, __FRAME_THREAD__, NULL);
 	assert(!ret);
 	ret = pthread_create(&tid_display, NULL, __DISPLAY_THREAD__, NULL);
@@ -1044,16 +1092,8 @@ int main(int argc, char **argv)
 
 	if (config.osd.enabled && wfb_thread_started) {
 		ret = pthread_join(tid_wfbcli, NULL);
-		assert(!ret);
-    }
-
-    if (dvr_thread_started) {
-        if (dvr != NULL) {
-            dvr->shutdown();
-        }
-        ret = pthread_join(tid_dvr, NULL);
         assert(!ret);
-	}
+    }
 
 	ret = pthread_join(tid_frame, NULL);
 	assert(!ret);
@@ -1066,16 +1106,40 @@ int main(int argc, char **argv)
 	assert(!ret);	
 
 	ret = pthread_join(tid_display, NULL);
-	assert(!ret);	
+	assert(!ret);
 
-	// All OSD fact producers are stopped by this point.
-	// Stop OSD before destroying the video synchronization primitives used by its thread.
-	OsdService::stop();
-	
-	ret = pthread_cond_destroy(&video_cond);
-	assert(!ret);
-	ret = pthread_mutex_destroy(&video_mutex);
-	assert(!ret);
+    if (encoder_thread_started) {
+        if (dvr != NULL) {
+            dvr->shutdown();
+        }
+        encoder->shutdown();
+        ret = pthread_join(tid_encoder, NULL);
+        assert(!ret);
+	}
+
+    bool dvr_join_pending = false;
+    if (dvr_thread_started) {
+        struct timespec deadline;
+        clock_gettime(CLOCK_REALTIME, &deadline);
+        deadline.tv_sec += DVR_EXIT_TIMEOUT_S;
+        ret = pthread_timedjoin_np(tid_dvr, NULL, &deadline);
+        if (ret == ETIMEDOUT) {
+            spdlog::error("[ DVR ] worker stuck in storage I/O - restoring the display first, exit "
+                          "waits for it at the end");
+            dvr_join_pending = true;
+        } else {
+            assert(!ret);
+        }
+    }
+
+    // All OSD fact producers are stopped by this point.
+    // Stop OSD before destroying the video synchronization primitives used by its thread.
+    OsdService::stop();
+
+    ret = pthread_cond_destroy(&video_cond);
+    assert(!ret);
+    ret = pthread_mutex_destroy(&video_mutex);
+    assert(!ret);
 
 	////////////////////////////////////////////// MPI CLEANUP
 
@@ -1087,11 +1151,20 @@ int main(int argc, char **argv)
 
     remove(pidFilePath.c_str());
 
-    // Every thread that reads `dvr` has been joined, and ~TsWriter joins the TS writer
-    // thread, which can block if storage is wedged. Doing it here means such a hang costs only this
-    // process's own exit - the display has already been restored and the DRM state cleaned up.
+    if (dvr_join_pending) {
+        ret = pthread_join(tid_dvr, NULL);
+        assert(!ret);
+    }
+
+    // Every thread that reads `dvr`/`encoder` has been joined, and ~TsWriter closes a file left open,
+    // which can still block on storage; doing it last means that costs only this process's own
+    // exit - the display has already been restored and the DRM state cleaned up.
     delete dvr;
     dvr = NULL;
+    delete video_restreamer;
+    video_restreamer = NULL;
+    delete encoder;
+    encoder = NULL;
 
 	return 0;
 }

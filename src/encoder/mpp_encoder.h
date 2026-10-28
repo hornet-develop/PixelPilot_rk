@@ -1,5 +1,5 @@
-#ifndef DVR_MPP_ENCODER_H
-#define DVR_MPP_ENCODER_H
+#ifndef MPP_ENCODER_H
+#define MPP_ENCODER_H
 
 #include <cstdint>
 #include <functional>
@@ -19,8 +19,8 @@ public:
     int  get_hor_stride() const { return cfg_hor_stride; }
     int  get_ver_stride() const { return cfg_ver_stride; }
 
-    // Encode the next submitted frame as an IDR. The DVR uses this to place keyframes on the media
-    // timeline; see the note on KEYFRAME_INTERVAL_90K in dvr.cpp.
+    // Encode the next submitted frame as an IDR. VideoEncoder uses this to place keyframes on the
+    // timeline; see the note on KEYFRAME_INTERVAL_MS in video_encoder.cpp.
     void request_idr();
 
     int submit(MppBuffer buf, int64_t pts, int width, int height,

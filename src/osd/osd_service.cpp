@@ -27,6 +27,7 @@ extern bool osd_update_ready;
 // -----------------------------------------------------------------------------
 
 std::unique_ptr<OsdService> OsdService::instance_;
+std::mutex OsdService::instance_mutex_;
 
 OsdService::OsdService(OsdServiceParams params)
     : params_(std::move(params)), osd_(params_.refresh_frequency_ms, params_.widget_enabled) {}
@@ -78,27 +79,32 @@ bool OsdService::init() {
 }
 
 void OsdService::stop() {
-    if (!instance_)
+    std::unique_ptr<OsdService> instance;
+    {
+        std::lock_guard<std::mutex> lock(instance_mutex_);
+        instance = std::move(instance_);
+    }
+    if (!instance)
         return;
 
-    instance_->stop_.store(true);
-    instance_->fact_cv_.notify_one();
+    instance->stop_.store(true);
+    instance->fact_cv_.notify_one();
 
-    const int ret = pthread_join(instance_->thread_, nullptr);
+    const int ret = pthread_join(instance->thread_, nullptr);
     if (ret != 0) {
         spdlog::error("Failed to join OSD thread: {}", ret);
-        return;
     }
-    instance_.reset();
 }
 
 void OsdService::publishFact(Fact fact) {
+    std::lock_guard<std::mutex> lock(instance_mutex_);
     if (!instance_ || !instance_->params_.enabled)
         return;
     instance_->enqueueFact(std::move(fact));
 }
 
 void OsdService::publishFacts(std::vector<Fact> facts) {
+    std::lock_guard<std::mutex> lock(instance_mutex_);
     if (!instance_ || !instance_->params_.enabled)
         return;
     instance_->enqueueFacts(std::move(facts));

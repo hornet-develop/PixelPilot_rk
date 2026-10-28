@@ -51,10 +51,17 @@ struct OsdConfig {
     std::unordered_map<std::string, bool> widget_enabled{};
 };
 
+struct RestreamConfig {
+    std::string address = "0.0.0.0";
+    uint16_t port = 5604;
+    std::string socket_path;
+};
+
 struct Config {
     SystemConfig system;
     DvrConfig dvr;
     OsdConfig osd;
+    RestreamConfig restream;
 };
 
 bool loadConfigFile(const std::filesystem::path &path, Config &config);

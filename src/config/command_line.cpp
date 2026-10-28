@@ -57,6 +57,17 @@ constexpr char help_text[] =
     "\n"
     "    --dvr-require-mount       - Only record if the DVR directory is on a mounted external device\n"
     "\n"
+    "    --restream-address <ip>\n"
+    "                              - Restream the re-encoded H265 video as RTP to this address.\n"
+    "                                Enables restreaming independently of DVR recording, both\n"
+    "                                outputs use the same encoded video\n"
+    "\n"
+    "    --restream-port <port>    - UDP port for the RTP restream (Default: 5604)\n"
+    "\n"
+    "    --restream-socket <path>\n"
+    "                              - Send the RTP restream to this Unix datagram socket instead of\n"
+    "                                UDP\n"
+    "\n"
     "    --screen-mode <mode>      - Override default screen mode. <width>x<heigth>@<fps> ex: 1920x1080@120\n"
     "\n"
     "    --target-frame-rate <fps> - Target DRM refresh rate for mode selection (30..120), ex: 60\n"
@@ -85,6 +96,9 @@ enum OptionId {
     OPT_DVR_SEGMENT_TIME,
     OPT_DVR_MIN_FREE_MB,
     OPT_DVR_REQUIRE_MOUNT,
+    OPT_RESTREAM_ADDRESS,
+    OPT_RESTREAM_PORT,
+    OPT_RESTREAM_SOCKET,
     OPT_LOG_LEVEL,
     OPT_OSD,
     OPT_OSD_CONFIG,
@@ -111,6 +125,9 @@ const struct option long_options[] = {
     {"dvr-segment-time", required_argument, nullptr, OPT_DVR_SEGMENT_TIME},
     {"dvr-min-free-mb", required_argument, nullptr, OPT_DVR_MIN_FREE_MB},
     {"dvr-require-mount", no_argument, nullptr, OPT_DVR_REQUIRE_MOUNT},
+    {"restream-address", required_argument, nullptr, OPT_RESTREAM_ADDRESS},
+    {"restream-port",   required_argument, nullptr, OPT_RESTREAM_PORT},
+    {"restream-socket", required_argument, nullptr, OPT_RESTREAM_SOCKET},
     {"log-level", required_argument, nullptr, OPT_LOG_LEVEL},
     {"osd", no_argument, nullptr, OPT_OSD},
     {"osd-config", required_argument, nullptr, OPT_OSD_CONFIG},
@@ -234,6 +251,25 @@ CommandLineResult parseCommandLine(int argc, char **argv, Config &config) {
 
             case OPT_DVR_REQUIRE_MOUNT: // --dvr-require-mount
                 config.dvr.require_mount = true;
+                break;
+
+            case OPT_RESTREAM_ADDRESS: { // --restream-address <ip>
+                struct in_addr address{};
+                if (inet_pton(AF_INET, optarg, &address) != 1) {
+                    return invalidArgument("--restream-address", optarg, "IPv4 address");
+                }
+                config.restream.address = optarg;
+                break;
+            }
+
+            case OPT_RESTREAM_PORT: // --restream-port <port>
+                if (!parseInteger(optarg, 1, std::numeric_limits<uint16_t>::max(), config.restream.port)) {
+                    return invalidArgument("--restream-port", optarg, "1..65535");
+                }
+                break;
+
+            case OPT_RESTREAM_SOCKET: // --restream-socket <path>
+                config.restream.socket_path = optarg;
                 break;
 
             case OPT_LOG_LEVEL: // --log-level
