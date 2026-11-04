@@ -5,6 +5,7 @@
 #include "text.hpp"
 
 #include <chrono>
+#include <ctime>
 #include <deque>
 #include <string>
 #include <sys/types.h>
@@ -21,7 +22,7 @@ class TimeWidget : public TextWidget {
 
     void updateTime();
 
-    std::chrono::steady_clock::time_point last_update_{};
+    std::time_t last_time_ = 0;
 };
 
 class DebugWidget : public Widget {
