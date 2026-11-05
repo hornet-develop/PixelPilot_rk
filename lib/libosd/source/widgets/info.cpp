@@ -4,7 +4,6 @@
 #include <cassert>
 #include <chrono>
 #include <cmath>
-#include <ctime>
 #include <sstream>
 
 // -----------------------------------------------------------------------------
@@ -21,14 +20,14 @@ void TimeWidget::draw(cairo_t *cr) {
 }
 
 void TimeWidget::updateTime() {
-    const auto now = std::chrono::steady_clock::now();
-    if (now - last_update_ < std::chrono::seconds(1)) {
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t time = std::chrono::system_clock::to_time_t(now);
+
+    if (time == last_time_) {
         return;
     }
 
-    last_update_ = now;
-    const auto system_now = std::chrono::system_clock::now();
-    const std::time_t time = std::chrono::system_clock::to_time_t(system_now);
+    last_time_ = time;
 
     std::tm tm{};
     if (localtime_r(&time, &tm) == nullptr) {
